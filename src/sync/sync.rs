@@ -109,7 +109,7 @@ impl Sync {
     self.check().await?;
 
     let client = self.node_client.clone();
-    let sub = client.subscribe_events().await?;
+    let sub = client.subscribe_finalized_events().await?;
     let decoder = client.events_decoder();
     let mut sub = EventSubscription::<DefaultNodeRuntime>::new(sub, decoder);
     sub.filter_event::<EraPayoutEvent<_>>();
@@ -272,6 +272,8 @@ impl Sync {
       self
         .add_stash_to_era(&stash, active_era.index, false)
         .await?;
+
+      debug!("successfully synced validator with stash {}", stash);
     }
 
     info!(
