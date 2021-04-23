@@ -23,6 +23,8 @@ use crate::cache::{create_pool, RedisPool};
 use crate::config::{Config, CONFIG};
 use crate::errors::{CacheError, SyncError};
 use crate::sync::stats::{max, mean, median, min};
+use async_recursion::async_recursion;
+use chrono::Utc;
 use log::{debug, error, info};
 use redis::aio::Connection;
 use std::{collections::BTreeMap, convert::TryInto, marker::PhantomData, result::Result};
@@ -121,7 +123,7 @@ impl Sync {
               Ok(event) => {
                 info!("successfully decoded event {:?}", event);
                 self.active_era().await?;
-                self.eras_history(event.era_index).await?;
+                self.eras_history(event.era_index, Some(true)).await?;
                 self.validators().await?;
                 self.active_validators().await?;
               }
@@ -383,7 +385,7 @@ impl Sync {
     let history_depth: u32 = client.history_depth(None).await?;
     let start_index = active_era_index - history_depth;
     for era_index in start_index..active_era_index {
-      self.eras_history(era_index).await?;
+      self.eras_history(era_index, None).await?;
     }
     info!("successfully synced {} eras history", history_depth);
 
@@ -396,14 +398,44 @@ impl Sync {
   /// <ErasRewardPoints<T>>;          --> collected
   /// <ErasTotalStake<T>>;            --> collected
   /// ErasStartSessionIndex;          --> not needed for now
-  async fn eras_history(&self, era_index: EraIndex) -> Result<(), SyncError> {
-    self.eras_validator_reward(era_index).await?;
-    self.eras_total_stake(era_index).await?;
-    self.eras_reward_points(era_index).await?;
+  #[async_recursion]
+  async fn eras_history(&self, era_index: EraIndex, force: Option<bool>) -> Result<(), SyncError> {
+    let mut conn = self
+      .cache_pool
+      .get()
+      .await
+      .map_err(CacheError::RedisPoolError)?;
 
-    info!("successfully synced history in era {}", era_index);
+    if let Some(true) = force {
+      self.eras_validator_reward(era_index).await?;
+      self.eras_total_stake(era_index).await?;
+      self.eras_reward_points(era_index).await?;
+      let key = format!("{}:era", era_index);
+      let _: () = redis::cmd("HSET")
+        .arg(key)
+        .arg(&[("synced_at", Utc::now().timestamp().to_string())])
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+      info!("successfully synced history in era {}", era_index);
 
-    Ok(())
+      return Ok(());
+    }
+    // Check if era is already synced
+    let key = format!("{}:era", era_index);
+    let is_synced: bool = redis::cmd("HEXISTS")
+      .arg(key)
+      .arg("synced_at")
+      .query_async(&mut conn as &mut Connection)
+      .await
+      .map_err(CacheError::RedisCMDError)?;
+
+    if is_synced {
+      info!("skipping era {} -> already synced", era_index);
+      return Ok(());
+    }
+
+    return self.eras_history(era_index, Some(true)).await;
   }
 
   /// Sync <ErasValidatorReward<T>>
