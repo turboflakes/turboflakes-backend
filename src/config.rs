@@ -32,6 +32,7 @@
 //
 use dotenv;
 use lazy_static::lazy_static;
+use log::info;
 use serde::Deserialize;
 use std::env;
 
@@ -55,11 +56,14 @@ lazy_static! {
 /// Inject dotenv and env vars into the Config struct
 fn get_config() -> Config {
   let config_filename = env::var("TURBOFLAKES_CONFIG_FILENAME").unwrap_or(".env".to_string());
-  dotenv::from_filename(config_filename).ok();
+  dotenv::from_filename(&config_filename).ok();
+  
+  env_logger::init();
+  info!("loading configuration from {}", &config_filename);
 
   match envy::from_env::<Config>() {
     Ok(config) => config,
-    Err(error) => panic!("Configuration Error: {:#?}", error),
+    Err(error) => panic!("configuration error: {:#?}", error),
   }
 }
 
