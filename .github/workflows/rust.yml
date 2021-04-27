@@ -1,6 +1,6 @@
 on: [push]
 
-name: build
+name: Rust CI - Create Release
 
 jobs:
   check:
@@ -22,3 +22,24 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: check
+
+      - name: Run cargo test
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+
+      - name: Run cargo build 
+        uses: actions-rs/cargo@v1
+        with:
+          command: build --release --target x86_64-unknown-linux-gnu
+
+      - name: Create release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
+          draft: true
+          prerelease: false
