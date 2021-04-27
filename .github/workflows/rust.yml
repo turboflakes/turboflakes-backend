@@ -40,6 +40,8 @@ jobs:
           release_name: Release ${{ github.ref }}
           draft: true
           prerelease: false
+
+      - name: Git Archives
         run: |
           git archive -o latest.zip HEAD
           echo "done!"
