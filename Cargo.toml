@@ -24,3 +24,5 @@ async-trait = "^0.1.49"
 substrate-subxt = { git = "https://github.com/turboflakes/substrate-subxt", branch = "develop" }
 chrono = "0.4.19"
 async-recursion = "0.3.2"
+codec = { package = "parity-scale-codec", version = "2.0.1", default-features = false, features = ["derive", "full"] }
+regex = "1.4.6"

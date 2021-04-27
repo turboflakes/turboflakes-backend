@@ -25,10 +25,13 @@ use crate::errors::{CacheError, SyncError};
 use crate::sync::stats::{max, mean, median, min};
 use async_recursion::async_recursion;
 use chrono::Utc;
+use codec::Encode;
 use log::{debug, error, info};
 use redis::aio::Connection;
+use regex::Regex;
 use std::{collections::BTreeMap, convert::TryInto, marker::PhantomData, result::Result};
 use substrate_subxt::{
+  identity::{IdentityOfStoreExt, SuperOfStoreExt},
   session::ValidatorsStore,
   sp_core::storage::StorageKey,
   sp_core::Decode,
@@ -245,6 +248,7 @@ impl Sync {
       } else {
         false
       };
+
       // Calculate inclusion rate
       let inclusion_rate = self
         .calculate_inclusion_rate(&stash, active_era.index - history_depth, active_era.index)
@@ -252,12 +256,16 @@ impl Sync {
 
       // Calculate mean reward points
       let mean_reward_points = self.calculate_mean_reward_points(&stash).await?;
+
+      // Fetch identity
+      let name = self.get_identity(&stash, None).await?;
       // Cache information for the stash
       let key = format!("{}:val", stash);
       let _: () = redis::cmd("HSET")
         .arg(key)
         .arg(&[
           ("controller", controller.to_string()),
+          ("name", name.to_string()),
           ("inclusion_rate", inclusion_rate.to_string()),
           ("mean_reward_points", mean_reward_points.to_string()),
           ("reward_staked", reward_staked.to_string()),
@@ -284,6 +292,41 @@ impl Sync {
     );
 
     Ok(())
+  }
+
+  #[async_recursion]
+  async fn get_identity(
+    &self,
+    stash: &AccountId32,
+    sub_account_name: Option<String>,
+  ) -> Result<String, SyncError> {
+    let client = self.node_client.clone();
+
+    let re = Regex::new(r"[\r\n\f]+").unwrap();
+    let display: String = match client.identity_of(stash.clone(), None).await? {
+      Some(registration) => {
+        let mut parent =
+          String::from_utf8(registration.info.display.encode()).unwrap_or("-".to_string());
+        parent = re.replace_all(&parent, "").to_string();
+        if let Some(n) = sub_account_name {
+          format!("{}/{}", parent, n)
+        } else {
+          parent
+        }
+      }
+      None => {
+        if let Some((parent_account, data)) = client.super_of(stash.clone(), None).await? {
+          let mut sub_account_name = String::from_utf8(data.encode()).unwrap();
+          sub_account_name = re.replace_all(&sub_account_name, "").to_string();
+          return self
+            .get_identity(&parent_account, Some(sub_account_name))
+            .await;
+        } else {
+          "".to_string()
+        }
+      }
+    };
+    Ok(display.to_string())
   }
 
   /// Calculate inclusion rate for the last depth history eras
