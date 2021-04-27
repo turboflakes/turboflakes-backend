@@ -15,12 +15,12 @@ jobs:
             override: true
             components: rustfmt, clippy
 
-      - name: Run cargo test
-        uses: actions-rs/cargo@v1
-        env:
-          TURBOFLAKES_CONFIG_FILENAME: .env.example
-        with:
-          command: test
+      # - name: Run cargo test
+      #   uses: actions-rs/cargo@v1
+      #   env:
+      #     TURBOFLAKES_CONFIG_FILENAME: .env.example
+      #   with:
+      #     command: test
 
       # - name: Run cargo build 
       #   uses: actions-rs/cargo@v1
@@ -43,7 +43,8 @@ jobs:
 
       - name: Git Archives
         run: |
-          git archive -o latest.zip HEAD
+          name=${{ github.ref }}
+          git archive --output=./$name.tar.gz --format=tar.gz --prefix=archive/ $name
           echo "done!"
       # - name: Upload Release Asset
       #   id: upload-release-asset 
