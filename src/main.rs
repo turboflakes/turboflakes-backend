@@ -32,13 +32,11 @@ use crate::cache::add_pool;
 use crate::routes::routes;
 use crate::sync::sync::Sync;
 use actix_web::{middleware, App, HttpServer};
-use dotenv::dotenv;
 use log::info;
 use async_std::task;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    dotenv().ok();
     env_logger::init();
     let config = CONFIG.clone();
 
