@@ -1,16 +1,16 @@
 // The MIT License (MIT)
 // Copyright © 2021 Aukbit Ltd.
-// 
+//
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
 // in the Software without restriction, including without limitation the rights
 // to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
 // copies of the Software, and to permit persons to whom the Software is
 // furnished to do so, subject to the following conditions:
-// 
+//
 // The above copyright notice and this permission notice shall be included in all
 // copies or substantial portions of the Software.
-// 
+//
 // THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 // IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 // FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -29,10 +29,12 @@
 // the operative system.
 //
 // Set Config struct into a CONFIG lazy_static to avoid multiple processing.
-// 
-use dotenv::dotenv;
-use serde::Deserialize;
+//
+use dotenv;
 use lazy_static::lazy_static;
+use log::info;
+use serde::Deserialize;
+use std::env;
 
 #[derive(Clone, Deserialize, Debug)]
 pub struct Config {
@@ -53,11 +55,16 @@ lazy_static! {
 
 /// Inject dotenv and env vars into the Config struct
 fn get_config() -> Config {
-  dotenv().ok();
+  let config_filename = env::var("TURBOFLAKES_CONFIG_FILENAME").unwrap_or(".env".to_string());
+  dotenv::from_filename(&config_filename).ok();
+
+  env_logger::try_init().unwrap_or_default();
+  
+  info!("loading configuration from {}", &config_filename);
 
   match envy::from_env::<Config>() {
     Ok(config) => config,
-    Err(error) => panic!("Configuration Error: {:#?}", error),
+    Err(error) => panic!("configuration error: {:#?}", error),
   }
 }
 

@@ -19,12 +19,13 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use actix_web::{error::ResponseError, http::StatusCode, HttpResponse};
+use actix_web::{error::ResponseError, HttpResponse};
 use derive_more::Display;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 #[derive(Error, Debug, Display, PartialEq)]
+#[allow(dead_code)]
 pub enum ApiError {
     BadRequest(String),
     NotFound(String),
@@ -44,7 +45,6 @@ impl ResponseError for ApiError {
             ApiError::InternalServerError(error) => {
                 HttpResponse::InternalServerError().json::<ErrorResponse>(error.into())
             }
-            _ => HttpResponse::new(StatusCode::INTERNAL_SERVER_ERROR),
         }
     }
 }
