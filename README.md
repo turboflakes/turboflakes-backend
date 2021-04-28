@@ -1,6 +1,8 @@
-# turboflakes-backend
+# turboflakes-backend 
 
 Turboflakes is a service that makes it fast and easy to interact with Substrate-based blockchain nodes
+
+![latest release](https://github.com/turboflakes/turboflakes-backend/actions/workflows/create_release.yml/badge.svg)
 
 ## Run
 
@@ -50,6 +52,7 @@ curl http://localhost:5000/api/v1/validator/{stash}
 {
     "stash": "{stash}",
     "controller": "controller",
+    "name": "TURBOFLAKES",
     "nominators": 3,
     "inclusion_rate": 0.14,
     "mean_reward_points": 7480,
