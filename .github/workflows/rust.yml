@@ -52,7 +52,7 @@ jobs:
       - name: Git Archives
         id: git_archive
         run: |
-          git archive --output=$SOURCE_NAME.tar.gz --format=tar.gz HEAD
+          git archive --output=./$SOURCE_NAME.tar.gz --format=tar.gz HEAD
         env:
           SOURCE_NAME: ${{ steps.branch_name.outputs.SOURCE_NAME }}
           SOURCE_BRANCH: ${{ steps.branch_name.outputs.SOURCE_BRANCH }}
