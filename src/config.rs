@@ -57,8 +57,9 @@ lazy_static! {
 fn get_config() -> Config {
   let config_filename = env::var("TURBOFLAKES_CONFIG_FILENAME").unwrap_or(".env".to_string());
   dotenv::from_filename(&config_filename).ok();
+
+  env_logger::try_init().unwrap_or_default();
   
-  env_logger::init();
   info!("loading configuration from {}", &config_filename);
 
   match envy::from_env::<Config>() {
