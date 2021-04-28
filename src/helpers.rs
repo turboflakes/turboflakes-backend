@@ -21,7 +21,7 @@
 
 use crate::errors::ApiError;
 use actix_web::{body::Body, web::{HttpResponse, Json}};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 /// Helper function to reduce boilerplate of an OK/Json response
 pub fn respond_json<T>(data: T) -> Result<Json<T>, ApiError>
@@ -32,6 +32,7 @@ where
 }
 
 /// Helper function to reduce boilerplate of an empty OK response
+#[allow(dead_code)]
 pub fn respond_ok() -> Result<HttpResponse, ApiError> {
     Ok(HttpResponse::Ok().body(Body::Empty))
 }
@@ -40,7 +41,7 @@ pub fn respond_ok() -> Result<HttpResponse, ApiError> {
 mod tests {
     use super::*;
 
-    #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+    #[derive(Clone, Debug, Serialize, PartialEq)]
     pub struct TestResponse {
         pub first_name: String,
     }
