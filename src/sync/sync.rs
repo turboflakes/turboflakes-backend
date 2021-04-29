@@ -30,6 +30,7 @@ use log::{debug, error, info};
 use redis::aio::Connection;
 use regex::Regex;
 use std::{collections::BTreeMap, convert::TryInto, marker::PhantomData, result::Result};
+use std::{thread, time};
 use substrate_subxt::{
   identity::{IdentityOfStoreExt, SuperOfStoreExt},
   session::ValidatorsStore,
@@ -78,7 +79,7 @@ impl Sync {
     }
   }
 
-  async fn check(&self) -> Result<(), SyncError> {
+  async fn check_cache(&self) -> Result<(), SyncError> {
     let mut conn = self
       .cache_pool
       .get()
@@ -96,8 +97,17 @@ impl Sync {
     Ok(())
   }
 
+  async fn ready_or_await(&self) {
+    while let Err(e) = self.check_cache().await {
+      error!("{}", e);
+      let five_secs = time::Duration::from_secs(5);
+      info!("awaiting for Redis to be ready");
+      thread::sleep(five_secs);
+    }
+  }
+
   pub async fn run(&self) -> Result<(), SyncError> {
-    self.check().await?;
+    self.ready_or_await().await;
 
     let active_era = self.active_era().await?;
 
@@ -111,7 +121,7 @@ impl Sync {
   }
 
   pub async fn subscribe(&self) -> Result<(), SyncError> {
-    self.check().await?;
+    self.ready_or_await().await;
 
     let client = self.node_client.clone();
     let sub = client.subscribe_finalized_events().await?;
