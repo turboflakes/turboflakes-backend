@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Fix inclusion rate and average reward points for a validator
+
 ## [0.1.0] - 2021-04-19
 
 - First release
@@ -24,7 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CI release in github actions
 - Use version script to bump new versions based on [bump-version.sh](https://gist.github.com/paulormart/e8c8e659f78d0ef6a497f22b41d814f9)
 
-## [0.2.1] - 2021-04-29
+## [0.2.2] - 2021-04-29
 
 ### Added
 

@@ -218,8 +218,8 @@ impl Sync {
     let key = format!("{}:val:eras:active", stash);
     let _: () = redis::cmd("ZADD")
       .arg(key)
-      .arg(reward_points)
       .arg(era_index)
+      .arg(reward_points)
       .query_async(&mut conn as &mut Connection)
       .await
       .map_err(CacheError::RedisCMDError)?;
@@ -265,7 +265,9 @@ impl Sync {
         .await?;
 
       // Calculate mean reward points
-      let mean_reward_points = self.calculate_mean_reward_points(&stash).await?;
+      let mean_reward_points = self
+        .calculate_mean_reward_points(&stash, active_era.index - history_depth, active_era.index)
+        .await?;
 
       // Fetch identity
       let name = self.get_identity(&stash, None).await?;
@@ -353,10 +355,10 @@ impl Sync {
       .map_err(CacheError::RedisPoolError)?;
 
     let key = format!("{}:val:eras:active", stash);
-    let count: f32 = redis::cmd("ZLEXCOUNT")
+    let count: f32 = redis::cmd("ZCOUNT")
       .arg(key)
-      .arg(format!("({}", era_index_min))
-      .arg(format!("[{}", era_index_max))
+      .arg(format!("{}", era_index_min))
+      .arg(format!("({}", era_index_max))
       .query_async(&mut conn as &mut Connection)
       .await
       .map_err(CacheError::RedisCMDError)?;
@@ -365,7 +367,12 @@ impl Sync {
   }
 
   /// Calculate mean reward points for all eras available
-  async fn calculate_mean_reward_points(&self, stash: &AccountId32) -> Result<f64, SyncError> {
+  async fn calculate_mean_reward_points(
+    &self,
+    stash: &AccountId32,
+    era_index_min: EraIndex,
+    era_index_max: EraIndex,
+  ) -> Result<f64, SyncError> {
     let mut conn = self
       .cache_pool
       .get()
@@ -373,17 +380,16 @@ impl Sync {
       .map_err(CacheError::RedisPoolError)?;
 
     let key = format!("{}:val:eras:active", stash);
-    let t: Vec<(u32, u32)> = redis::cmd("ZRANGE")
+    let t: Vec<u32> = redis::cmd("ZRANGE")
       .arg(key)
-      .arg("0")
-      .arg("-1")
-      .arg("WITHSCORES")
+      .arg(format!("{}", era_index_min))
+      .arg(format!("({}", era_index_max))
+      .arg("BYSCORE")
       .query_async(&mut conn as &mut Connection)
       .await
       .map_err(CacheError::RedisCMDError)?;
 
-    let v: Vec<u32> = t.into_iter().map(|(_era, points)| points).collect();
-    Ok(mean(&v))
+    Ok(mean(&t))
   }
 
   /// Sync active validators for specific era
