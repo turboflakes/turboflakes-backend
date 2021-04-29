@@ -23,3 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Subscribe for Staking::EraPayout event
 - CI release in github actions
 - Use version script to bump new versions based on [bump-version.sh](https://gist.github.com/paulormart/e8c8e659f78d0ef6a497f22b41d814f9)
+
+## [0.2.1] - 2021-04-29
+
+### Added
+
+- Await for Redis to be ready during restarts
