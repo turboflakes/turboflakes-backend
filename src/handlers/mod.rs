@@ -20,5 +20,6 @@
 // SOFTWARE.
 
 pub mod health;
+pub mod info;
 pub mod era;
 pub mod validator;

@@ -13,6 +13,20 @@ $ cargo run
 
 ## Available endpoints
 
+Index endpoint
+
+```bash
+#!/bin/bash
+$ curl http://0.0.0.0:5000
+
+{
+    "name": "turboflakes-backend",
+    "version": "0.3.0",
+    "api_path": "/api/v1",
+    "substrate_node_url": "wss://westend-rpc.polkadot.io"
+}
+```
+
 Health endpoint
 
 ```bash
@@ -21,7 +35,6 @@ $ curl http://0.0.0.0:5000/health
 
 {
   "status": "ok",
-  "version": "0.1.0"
 }
 ```
 

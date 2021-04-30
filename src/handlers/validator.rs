@@ -21,10 +21,10 @@
 
 use crate::cache::{get_conn, RedisPool};
 use crate::errors::{ApiError, CacheError};
-use crate::helpers::respond_json;
-use actix_web::web::{Data, Json, Path};
+use crate::helpers::{respond_json, respond_ok};
+use actix_web::web::{Data, HttpResponse, Json, Path, Query};
 use redis::aio::Connection;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 type ValidatorCache = BTreeMap<String, String>;
@@ -175,7 +175,7 @@ impl From<ValidatorEraCache> for ValidatorEra {
 }
 
 /// Get a validator eras
-pub async fn get_validator_era(
+pub async fn get_validator_eras(
     stash: Path<String>,
     cache: Data<RedisPool>,
 ) -> Result<Json<ValidatorEraResponse>, ApiError> {
@@ -228,4 +228,15 @@ pub async fn get_validator_era(
         stash: stash.to_string(),
         eras: eras,
     })
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Params {
+    q: String,
+}
+
+/// Get a validators
+pub async fn get_validators(params: Query<Params>) -> Result<HttpResponse, ApiError> {
+    println!("{:?}", params);
+    respond_ok()
 }
