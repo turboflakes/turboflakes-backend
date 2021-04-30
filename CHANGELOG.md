@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Fix inclusion rate and average reward points for a validator
 - Setup Cors and configurable allowed origin header
+- Fix closed subcriptions
 
 ## [0.1.0] - 2021-04-19
 

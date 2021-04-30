@@ -121,13 +121,14 @@ impl Sync {
 
   #[async_recursion]
   pub async fn subscribe(&self) -> Result<(), SyncError> {
+    info!("Starting subscription");
     self.ready_or_await().await;
     let client = self.node_client.clone();
     let sub = client.subscribe_finalized_events().await?;
     let decoder = client.events_decoder();
     let mut sub = EventSubscription::<DefaultNodeRuntime>::new(sub, decoder);
     sub.filter_event::<EraPayoutEvent<_>>();
-    info!("Starting EraPayoutEvent subscription");
+    info!("Waiting for EraPayoutEvent");
     while let Some(result) = sub.next().await {
       if let Ok(raw_event) = result {
         match EraPayoutEvent::<DefaultNodeRuntime>::decode(&mut &raw_event.data[..]) {
