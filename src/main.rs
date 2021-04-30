@@ -43,7 +43,7 @@ async fn main() -> std::io::Result<()> {
     let config = CONFIG.clone();
 
     info!(
-        "starting {} version {} <{}>",
+        "Starting {} version {} <{}>",
         env!("CARGO_PKG_NAME"),
         env!("CARGO_PKG_VERSION"),
         config.substrate_ws_url

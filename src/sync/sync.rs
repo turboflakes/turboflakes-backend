@@ -26,7 +26,7 @@ use crate::sync::stats::{max, mean, median, min};
 use async_recursion::async_recursion;
 use chrono::Utc;
 use codec::Encode;
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use redis::aio::Connection;
 use regex::Regex;
 use std::{collections::BTreeMap, convert::TryInto, marker::PhantomData, result::Result};
@@ -100,9 +100,8 @@ impl Sync {
   async fn ready_or_await(&self) {
     while let Err(e) = self.check_cache().await {
       error!("{}", e);
-      let five_secs = time::Duration::from_secs(5);
-      info!("awaiting for Redis to be ready");
-      thread::sleep(five_secs);
+      info!("Awaiting for Redis to be ready");
+      thread::sleep(time::Duration::from_secs(6));
     }
   }
 
@@ -120,39 +119,35 @@ impl Sync {
     Ok(())
   }
 
+  #[async_recursion]
   pub async fn subscribe(&self) -> Result<(), SyncError> {
     self.ready_or_await().await;
-
     let client = self.node_client.clone();
     let sub = client.subscribe_finalized_events().await?;
     let decoder = client.events_decoder();
     let mut sub = EventSubscription::<DefaultNodeRuntime>::new(sub, decoder);
     sub.filter_event::<EraPayoutEvent<_>>();
-    loop {
-      if let Some(result) = sub.next().await {
-        match result {
-          Ok(raw_event) => {
-            match EraPayoutEvent::<DefaultNodeRuntime>::decode(&mut &raw_event.data[..]) {
-              Ok(event) => {
-                info!("successfully decoded event {:?}", event);
-                self.active_era().await?;
-                self.eras_history(event.era_index, Some(true)).await?;
-                self.validators().await?;
-                self.active_validators().await?;
-              }
-              Err(e) => {
-                error!("decoding event error: {:?}", e);
-              }
-            }
+    info!("Starting EraPayoutEvent subscription");
+    while let Some(result) = sub.next().await {
+      if let Ok(raw_event) = result {
+        match EraPayoutEvent::<DefaultNodeRuntime>::decode(&mut &raw_event.data[..]) {
+          Ok(event) => {
+            info!("Successfully decoded event {:?}", event);
+            self.active_era().await?;
+            self.eras_history(event.era_index, Some(true)).await?;
+            self.validators().await?;
+            self.active_validators().await?;
           }
           Err(e) => {
-            error!("subscription event error: {:?}", e);
+            error!("Decoding event error: {:?}", e);
           }
         }
       }
     }
-
-    // Ok(())
+    warn!("Subscription finished");
+    // If subscription has closed for some reason await and subscribe again
+    thread::sleep(time::Duration::from_secs(6));
+    return self.subscribe().await;
   }
 
   /// Sync active era
@@ -172,7 +167,7 @@ impl Sync {
       .await
       .map_err(CacheError::RedisCMDError)?;
 
-    info!("successfully synced active era {}", active_era.index);
+    info!("Successfully synced active era {}", active_era.index);
     Ok(active_era.index)
   }
 
@@ -295,11 +290,11 @@ impl Sync {
         .add_stash_to_era(&stash, active_era.index, false)
         .await?;
 
-      debug!("successfully synced validator with stash {}", stash);
+      debug!("Successfully synced validator with stash {}", stash);
     }
 
     info!(
-      "successfully synced all validators in era {}",
+      "Successfully synced all validators in era {}",
       active_era.index
     );
 
@@ -429,7 +424,7 @@ impl Sync {
     }
 
     info!(
-      "successfully synced {} active validators in era {}",
+      "Successfully synced {} active validators in era {}",
       &validators.len(),
       active_era.index
     );
@@ -446,7 +441,7 @@ impl Sync {
     for era_index in start_index..active_era_index {
       self.eras_history(era_index, None).await?;
     }
-    info!("successfully synced {} eras history", history_depth);
+    info!("Successfully synced {} eras history", history_depth);
 
     Ok(())
   }
@@ -476,7 +471,7 @@ impl Sync {
         .query_async(&mut conn as &mut Connection)
         .await
         .map_err(CacheError::RedisCMDError)?;
-      info!("successfully synced history in era {}", era_index);
+      info!("Successfully synced history in era {}", era_index);
 
       return Ok(());
     }
@@ -490,7 +485,7 @@ impl Sync {
       .map_err(CacheError::RedisCMDError)?;
 
     if is_synced {
-      info!("skipping era {} -> already synced", era_index);
+      info!("Skipping era {} -> already synced", era_index);
       return Ok(());
     }
 
@@ -519,7 +514,7 @@ impl Sync {
       .await
       .map_err(CacheError::RedisCMDError)?;
 
-    debug!("successfully synced total rewards in era {}", era_index);
+    debug!("Successfully synced total rewards in era {}", era_index);
     Ok(())
   }
 
@@ -541,7 +536,7 @@ impl Sync {
       .await
       .map_err(CacheError::RedisCMDError)?;
 
-    debug!("successfully synced total stake in era {}", era_index);
+    debug!("Successfully synced total stake in era {}", era_index);
 
     Ok(())
   }
@@ -581,7 +576,7 @@ impl Sync {
         .add_era_reward_points_to_stash(stash, era_index, *points)
         .await?;
       debug!(
-        "successfully synced validator reward points with stash {} in era {}",
+        "Successfully synced validator reward points with stash {} in era {}",
         stash, era_index
       );
     }
@@ -603,7 +598,7 @@ impl Sync {
       .map_err(CacheError::RedisCMDError)?;
 
     debug!(
-      "successfully synced total reward points in era {}",
+      "Successfully synced total reward points in era {}",
       era_index
     );
 
@@ -630,7 +625,7 @@ impl Sync {
     data.insert(String::from("blocked"), validator_prefs.blocked.to_string());
 
     debug!(
-      "successfully synced validator prefs with stash {} in era {}",
+      "Successfully synced validator prefs with stash {} in era {}",
       stash, era_index
     );
     Ok(())
@@ -656,7 +651,7 @@ impl Sync {
     data.insert(String::from("others_stake"), others_stake.to_string());
 
     debug!(
-      "successfully synced validator total stake with stash {} in era {}",
+      "Successfully synced validator total stake with stash {} in era {}",
       stash, era_index
     );
 

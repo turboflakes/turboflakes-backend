@@ -67,15 +67,15 @@ impl From<&String> for ErrorResponse {
 /// Cache specific error messages
 #[derive(Error, Debug)]
 pub enum CacheError {
-    #[error("could not get redis connection from pool : {0}")]
+    #[error("Could not get redis connection from pool : {0}")]
     RedisPoolError(mobc::Error<mobc_redis::redis::RedisError>),
-    #[error("error parsing string from redis result: {0}")]
+    #[error("Error parsing string from redis result: {0}")]
     RedisTypeError(mobc_redis::redis::RedisError),
-    #[error("error executing redis command: {0}")]
+    #[error("Error executing redis command: {0}")]
     RedisCMDError(mobc_redis::redis::RedisError),
-    #[error("error creating redis client: {0}")]
+    #[error("Error creating redis client: {0}")]
     RedisClientError(mobc_redis::redis::RedisError),
-    #[error("pong response error")]
+    #[error("Pong response error")]
     RedisPongError,
     #[error("Other error: {0}")]
     Other(String),
@@ -98,9 +98,9 @@ impl From<CacheError> for ApiError {
 /// Syncronization specific error messages
 #[derive(Error, Debug)]
 pub enum SyncError {
-    #[error("cache error: {0}")]
+    #[error("Cache error: {0}")]
     CacheError(#[from] CacheError),
-    #[error("substrate_subxt error: {0}")]
+    #[error("Substrate_subxt error: {0}")]
     SubxtError(#[from] substrate_subxt::Error),
     #[error("Other error: {0}")]
     Other(String),

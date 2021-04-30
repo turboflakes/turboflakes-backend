@@ -60,11 +60,11 @@ fn get_config() -> Config {
 
   env_logger::try_init().unwrap_or_default();
   
-  info!("loading configuration from {}", &config_filename);
+  info!("Loading configuration from {} file", &config_filename);
 
   match envy::from_env::<Config>() {
     Ok(config) => config,
-    Err(error) => panic!("configuration error: {:#?}", error),
+    Err(error) => panic!("Configuration error: {:#?}", error),
   }
 }
 
