@@ -7,15 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- Fix inclusion rate and average reward points for a validator
-- Setup Cors and configurable allowed origin header
-- Fix closed subcriptions
-- Change health endpoint remove version parameter
-- Add Index endpoint with service information
-- Add query parameters to validator endpoint
-- Change all cache keys to an Enum with all possible variants
-- Restart subscription and history on error
-
 ## [0.1.0] - 2021-04-19
 
 - First release
@@ -38,3 +29,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Await for Redis to be ready during restarts
+
+## [0.3.0] - 2021-05-04
+
+### Changed
+
+- Fix inclusion rate and average reward points for a validator
+- Setup Cors and configurable allowed origin header
+- Fix closed subcriptions
+- Change health endpoint remove version parameter
+- Change all cache keys to an Enum with all possible variants
+- Restart subscription and history on error
+
+### Added
+
+- Add Index endpoint with service information
+- Add query parameters to validator endpoint
