@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add Index endpoint with service information
 - Add query parameters to validator endpoint
 - Change all cache keys to an Enum with all possible variants
+- Restart subscription and history on error
 
 ## [0.1.0] - 2021-04-19
 

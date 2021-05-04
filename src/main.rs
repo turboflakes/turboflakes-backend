@@ -33,7 +33,6 @@ use crate::routes::routes;
 use crate::sync::sync::Sync;
 use actix_cors::Cors;
 use actix_web::{http, middleware, App, HttpServer};
-use async_std::task;
 use log::info;
 use std::env;
 
@@ -49,12 +48,8 @@ async fn main() -> std::io::Result<()> {
         config.substrate_ws_url
     );
 
-    // Sync history and subscribe events
-    task::spawn(async move {
-        let sync: Sync = Sync::new().await;
-        sync.run().await.unwrap();
-        sync.subscribe().await.unwrap();
-    });
+    // Spawn history and subscription sincronization tasks
+    Sync::run();
 
     // Start http server
     let addr = format!("{}:{}", config.turboflakes_host, config.turboflakes_port);

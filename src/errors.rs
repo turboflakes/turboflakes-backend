@@ -109,6 +109,8 @@ pub enum SyncError {
     CacheError(#[from] CacheError),
     #[error("Substrate_subxt error: {0}")]
     SubxtError(#[from] substrate_subxt::Error),
+    #[error("Subscription finished")]
+    SubscriptionFinished,
     #[error("Other error: {0}")]
     Other(String),
 }

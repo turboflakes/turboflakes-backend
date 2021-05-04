@@ -24,9 +24,10 @@ use crate::config::{Config, CONFIG};
 use crate::errors::{CacheError, SyncError};
 use crate::sync::stats::{max, mean, median, min};
 use async_recursion::async_recursion;
+use async_std::task;
 use chrono::Utc;
 use codec::Encode;
-use log::{debug, error, info, warn};
+use log::{debug, error, info};
 use redis::aio::Connection;
 use regex::Regex;
 use std::{collections::BTreeMap, convert::TryInto, marker::PhantomData, result::Result};
@@ -143,7 +144,7 @@ impl Sync {
     }
   }
 
-  pub async fn run(&self) -> Result<(), SyncError> {
+  async fn history(&self) -> Result<(), SyncError> {
     self.ready_or_await().await;
 
     let active_era = self.active_era().await?;
@@ -157,8 +158,7 @@ impl Sync {
     Ok(())
   }
 
-  #[async_recursion]
-  pub async fn subscribe(&self) -> Result<(), SyncError> {
+  async fn subscribe(&self) -> Result<(), SyncError> {
     info!("Starting subscription");
     self.ready_or_await().await;
     let client = self.node_client.clone();
@@ -183,10 +183,14 @@ impl Sync {
         }
       }
     }
-    warn!("Subscription finished");
     // If subscription has closed for some reason await and subscribe again
-    thread::sleep(time::Duration::from_secs(6));
-    return self.subscribe().await;
+    Err(SyncError::SubscriptionFinished)
+  }
+
+  /// Spawn history and subscription sincronization tasks
+  pub fn run() {
+    spawn_and_restart_history_on_error();
+    spawn_and_restart_subscription_on_error();
   }
 
   /// Sync active era
@@ -565,7 +569,7 @@ impl Sync {
   }
 
   /// Sync <ErasRewardPoints<T>>;
-  pub async fn eras_reward_points(&self, era_index: EraIndex) -> Result<(), SyncError> {
+  async fn eras_reward_points(&self, era_index: EraIndex) -> Result<(), SyncError> {
     let mut conn = self
       .cache_pool
       .get()
@@ -678,4 +682,31 @@ impl Sync {
 
     Ok(())
   }
+}
+
+pub fn spawn_and_restart_subscription_on_error() {
+  task::spawn(async {
+    loop {
+      let sync: Sync = Sync::new().await;
+      if let Err(e) = sync.subscribe().await {
+        error!("{}", e);
+        thread::sleep(time::Duration::from_millis(500));
+      };
+    }
+  });
+}
+
+pub fn spawn_and_restart_history_on_error() {
+  task::spawn(async {
+    loop {
+      let sync: Sync = Sync::new().await;
+      match sync.history().await {
+        Ok(()) => break,
+        Err(e) => {
+          error!("{}", e);
+          thread::sleep(time::Duration::from_millis(1000));
+        }
+      }
+    }
+  });
 }
