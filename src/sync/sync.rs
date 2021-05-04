@@ -62,6 +62,44 @@ fn get_account_id_from_storage_key(key: StorageKey) -> AccountId32 {
   AccountId32::new(v)
 }
 
+#[derive(Debug, PartialEq)]
+pub enum Key {
+  ActiveEra,
+  Era(EraIndex),
+  ValidatorAtEra(EraIndex, AccountId32),
+  ValidatorAtEraScan(AccountId32),
+  AllValidatorsByEra(EraIndex),
+  ActiveValidatorsByEra(EraIndex),
+  Validator(AccountId32),
+  ActiveErasByValidator(AccountId32),
+}
+
+impl std::fmt::Display for Key {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    match self {
+      Self::ActiveEra => write!(f, "era:active"),
+      Self::Era(era_index) => write!(f, "{}:era", era_index),
+      Self::ValidatorAtEra(era_index, stash_account) => {
+        write!(f, "{}:era:{}:val", era_index, stash_account)
+      }
+      Self::ValidatorAtEraScan(stash_account) => write!(f, "*:era:{}:val", stash_account),
+      Self::AllValidatorsByEra(era_index) => write!(f, "{}:era:vals:all", era_index),
+      Self::ActiveValidatorsByEra(era_index) => write!(f, "{}:era:vals:active", era_index),
+      Self::Validator(stash_account) => write!(f, "{}:val", stash_account),
+      Self::ActiveErasByValidator(stash_account) => write!(f, "{}:val:eras:active", stash_account),
+    }
+  }
+}
+
+impl redis::ToRedisArgs for Key {
+  fn write_redis_args<W>(&self, out: &mut W)
+  where
+    W: ?Sized + redis::RedisWrite,
+  {
+    out.write_arg(self.to_string().as_bytes())
+  }
+}
+
 pub struct Sync {
   pub cache_pool: RedisPool,
   pub node_client: substrate_subxt::Client<DefaultNodeRuntime>,
@@ -160,9 +198,9 @@ impl Sync {
       .map_err(CacheError::RedisPoolError)?;
     let client = self.node_client.clone();
     let active_era = client.active_era(None).await?;
-    let key = format!("era:active");
+
     let _: () = redis::cmd("SET")
-      .arg(key)
+      .arg(Key::ActiveEra)
       .arg(active_era.index)
       .query_async(&mut conn as &mut Connection)
       .await
@@ -172,22 +210,14 @@ impl Sync {
     Ok(active_era.index)
   }
 
-  async fn add_stash_to_era(
-    &self,
-    stash: &AccountId32,
-    era_index: EraIndex,
-    is_active: bool,
-  ) -> Result<(), SyncError> {
+  /// Add stash to the list of validators available in era
+  async fn add_stash_to_era(&self, stash: &AccountId32, key: Key) -> Result<(), SyncError> {
     let mut conn = self
       .cache_pool
       .get()
       .await
       .map_err(CacheError::RedisPoolError)?;
 
-    let end = if is_active { ":active" } else { "" };
-
-    // add stash to the list of validators available in era
-    let key = format!("{}:era:vals{}", era_index, end);
     let _: () = redis::cmd("SADD")
       .arg(key)
       .arg(stash.to_string())
@@ -198,6 +228,7 @@ impl Sync {
     Ok(())
   }
 
+  /// Add era index to the list of eras where stash was active
   async fn add_era_reward_points_to_stash(
     &self,
     stash: &AccountId32,
@@ -210,10 +241,8 @@ impl Sync {
       .await
       .map_err(CacheError::RedisPoolError)?;
 
-    // add era index to the list of eras where stash was active
-    let key = format!("{}:val:eras:active", stash);
     let _: () = redis::cmd("ZADD")
-      .arg(key)
+      .arg(Key::ActiveErasByValidator(stash.clone()))
       .arg(era_index)
       .arg(reward_points)
       .query_async(&mut conn as &mut Connection)
@@ -268,9 +297,8 @@ impl Sync {
       // Fetch identity
       let name = self.get_identity(&stash, None).await?;
       // Cache information for the stash
-      let key = format!("{}:val", stash);
       let _: () = redis::cmd("HSET")
-        .arg(key)
+        .arg(Key::Validator(stash.clone()))
         .arg(&[
           ("controller", controller.to_string()),
           ("name", name.to_string()),
@@ -288,7 +316,7 @@ impl Sync {
         .map_err(CacheError::RedisCMDError)?;
 
       self
-        .add_stash_to_era(&stash, active_era.index, false)
+        .add_stash_to_era(&stash, Key::AllValidatorsByEra(active_era.index))
         .await?;
 
       debug!("Successfully synced validator with stash {}", stash);
@@ -350,9 +378,8 @@ impl Sync {
       .await
       .map_err(CacheError::RedisPoolError)?;
 
-    let key = format!("{}:val:eras:active", stash);
     let count: f32 = redis::cmd("ZCOUNT")
-      .arg(key)
+      .arg(Key::ActiveErasByValidator(stash.clone()))
       .arg(format!("{}", era_index_min))
       .arg(format!("({}", era_index_max))
       .query_async(&mut conn as &mut Connection)
@@ -375,9 +402,8 @@ impl Sync {
       .await
       .map_err(CacheError::RedisPoolError)?;
 
-    let key = format!("{}:val:eras:active", stash);
     let t: Vec<u32> = redis::cmd("ZRANGE")
-      .arg(key)
+      .arg(Key::ActiveErasByValidator(stash.clone()))
       .arg(format!("{}", era_index_min))
       .arg(format!("({}", era_index_max))
       .arg("BYSCORE")
@@ -411,13 +437,12 @@ impl Sync {
     };
     for stash in validators.iter() {
       self
-        .add_stash_to_era(&stash, active_era.index, true)
+        .add_stash_to_era(&stash, Key::ActiveValidatorsByEra(active_era.index))
         .await?;
 
       // Cache information for the stash
-      let key = format!("{}:val", stash);
       let _: () = redis::cmd("HSET")
-        .arg(key)
+        .arg(Key::Validator(stash.clone()))
         .arg(&[("active", "true")])
         .query_async(&mut conn as &mut Connection)
         .await
@@ -465,9 +490,8 @@ impl Sync {
       self.eras_validator_reward(era_index).await?;
       self.eras_total_stake(era_index).await?;
       self.eras_reward_points(era_index).await?;
-      let key = format!("{}:era", era_index);
       let _: () = redis::cmd("HSET")
-        .arg(key)
+        .arg(Key::Era(era_index))
         .arg(&[("synced_at", Utc::now().timestamp().to_string())])
         .query_async(&mut conn as &mut Connection)
         .await
@@ -477,9 +501,8 @@ impl Sync {
       return Ok(());
     }
     // Check if era is already synced
-    let key = format!("{}:era", era_index);
     let is_synced: bool = redis::cmd("HEXISTS")
-      .arg(key)
+      .arg(Key::Era(era_index))
       .arg("synced_at")
       .query_async(&mut conn as &mut Connection)
       .await
@@ -507,9 +530,9 @@ impl Sync {
       Some(v) => v,
       None => 0,
     };
-    let key = format!("{}:era", era_index);
+
     let _: () = redis::cmd("HSET")
-      .arg(key)
+      .arg(Key::Era(era_index))
       .arg(&[("total_reward", reward.to_string())])
       .query_async(&mut conn as &mut Connection)
       .await
@@ -529,9 +552,8 @@ impl Sync {
     let client = self.node_client.clone();
 
     let total_stake = client.eras_total_stake(era_index, None).await?;
-    let key = format!("{}:era", era_index);
     let _: () = redis::cmd("HSET")
-      .arg(key)
+      .arg(Key::Era(era_index))
       .arg(&[("total_stake", total_stake.to_string())])
       .query_async(&mut conn as &mut Connection)
       .await
@@ -565,9 +587,8 @@ impl Sync {
       self
         .set_eras_validator_stakers(era_index, stash, &mut validator_data)
         .await?;
-      let key = format!("{}:era:{}:val", era_index, stash);
       let _: () = redis::cmd("HSET")
-        .arg(key)
+        .arg(Key::ValidatorAtEra(era_index, stash.clone()))
         .arg(validator_data)
         .query_async(&mut conn as &mut Connection)
         .await
@@ -581,9 +602,8 @@ impl Sync {
         stash, era_index
       );
     }
-    let key = format!("{}:era", era_index);
     let _: () = redis::cmd("HSET")
-      .arg(key)
+      .arg(Key::Era(era_index))
       .arg(&[
         ("total_reward_points", era_reward_points.total.to_string()),
         ("min_reward_points", min(&reward_points).to_string()),

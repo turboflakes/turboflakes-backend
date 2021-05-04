@@ -49,6 +49,12 @@ impl ResponseError for ApiError {
     }
 }
 
+impl From<&str> for ApiError {
+    fn from(error: &str) -> Self {
+        ApiError::InternalServerError(error.into())
+    }
+}
+
 /// User-friendly error messages
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ErrorResponse {
@@ -94,6 +100,7 @@ impl From<CacheError> for ApiError {
         ApiError::InternalServerError(error.into())
     }
 }
+
 
 /// Syncronization specific error messages
 #[derive(Error, Debug)]

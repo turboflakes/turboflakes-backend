@@ -21,11 +21,13 @@
 
 use crate::cache::{get_conn, RedisPool};
 use crate::errors::{ApiError, CacheError};
-use crate::helpers::{respond_json, respond_ok};
-use actix_web::web::{Data, HttpResponse, Json, Path, Query};
+use crate::helpers::{respond_json};
+use crate::sync::sync::Key;
+use actix_web::web::{Data, Json, Path, Query};
 use redis::aio::Connection;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, str::FromStr};
+use substrate_subxt::{sp_runtime::AccountId32, staking::EraIndex};
 
 type ValidatorCache = BTreeMap<String, String>;
 type ValidatorEraCache = BTreeMap<String, String>;
@@ -93,9 +95,9 @@ pub async fn get_validator(
     cache: Data<RedisPool>,
 ) -> Result<Json<ValidatorResponse>, ApiError> {
     let mut conn = get_conn(&cache).await?;
-    let key = format!("{}:val", stash);
+    let stash = AccountId32::from_str(&*stash.to_string())?;
     let mut data: ValidatorCache = redis::cmd("HGETALL")
-        .arg(key.clone())
+        .arg(Key::Validator(stash.clone()))
         .query_async(&mut conn as &mut Connection)
         .await
         .map_err(CacheError::RedisCMDError)?;
@@ -181,6 +183,7 @@ pub async fn get_validator_eras(
 ) -> Result<Json<ValidatorEraResponse>, ApiError> {
     let mut conn = get_conn(&cache).await?;
 
+    let stash = AccountId32::from_str(&*stash.to_string())?;
     let mut eras: Vec<ValidatorEra> = vec![];
     let mut optional = Some(-1);
     while let Some(i) = optional {
@@ -194,7 +197,7 @@ pub async fn get_validator_eras(
             let (cursor, keys): (i32, Vec<String>) = redis::cmd("SCAN")
                 .arg(cursor)
                 .arg("MATCH")
-                .arg(format!("*:era:{}:val", stash))
+                .arg(Key::ValidatorAtEraScan(stash.clone()))
                 .arg("COUNT")
                 .arg("100")
                 .query_async(&mut conn as &mut Connection)
@@ -230,13 +233,45 @@ pub async fn get_validator_eras(
     })
 }
 
+#[derive(Debug, Deserialize, PartialEq)]
+enum Queries {
+    All = 1,
+    Active = 2,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct Params {
-    q: String,
+    q: Queries,
+}
+
+#[derive(Debug, Serialize, PartialEq)]
+pub struct ValidatorsResponse {
+    pub data: Vec<String>,
 }
 
 /// Get a validators
-pub async fn get_validators(params: Query<Params>) -> Result<HttpResponse, ApiError> {
-    println!("{:?}", params);
-    respond_ok()
+pub async fn get_validators(
+    params: Query<Params>,
+    cache: Data<RedisPool>,
+) -> Result<Json<ValidatorsResponse>, ApiError> {
+    let mut conn = get_conn(&cache).await?;
+    let era_index: EraIndex = redis::cmd("GET")
+        .arg(Key::ActiveEra)
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    let key = match params.q {
+        Queries::Active => Key::AllValidatorsByEra(era_index),
+        Queries::All => Key::ActiveValidatorsByEra(era_index),
+    };
+    let stashes: Vec<String> = redis::cmd("SMEMBERS")
+        .arg(key)
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    respond_json(ValidatorsResponse {
+        data: stashes,
+    })
 }
