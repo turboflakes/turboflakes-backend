@@ -20,6 +20,9 @@
 // SOFTWARE.
 
 pub fn mean(list: &Vec<u32>) -> f64 {
+  if list.len() == 0 {
+    return 0.0
+  }
   let sum: u32 = list.iter().sum();
   f64::from(sum) / (list.len() as f64)
 }

@@ -45,3 +45,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Add Index endpoint with service information
 - Add query parameters to validator endpoint
+
+## [0.3.1] - 2021-05-04
+
+### Changed
+
+- Fix mean for an empty list
