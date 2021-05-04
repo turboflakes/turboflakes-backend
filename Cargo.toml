@@ -1,6 +1,6 @@
 [package]
 name = "turboflakes-backend"
-version = "0.3.0"
+version = "0.3.1"
 authors = ["Paulo <paulo.martins@aukbit.com>"]
 edition = "2018"
 
