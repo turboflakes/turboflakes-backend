@@ -245,10 +245,11 @@ impl Sync {
       .await
       .map_err(CacheError::RedisPoolError)?;
 
+    let member = format!("{}:{}", era_index, reward_points);
     let _: () = redis::cmd("ZADD")
       .arg(Key::ActiveErasByValidator(stash.clone()))
-      .arg(era_index)
-      .arg(reward_points)
+      .arg(era_index) // score
+      .arg(member) // member
       .query_async(&mut conn as &mut Connection)
       .await
       .map_err(CacheError::RedisCMDError)?;
@@ -390,7 +391,9 @@ impl Sync {
       .await
       .map_err(CacheError::RedisCMDError)?;
 
-    Ok(count / (era_index_max as f32 - era_index_min as f32))
+    let inclusion = count / (era_index_max as f32 - era_index_min as f32);
+
+    Ok(inclusion)
   }
 
   /// Calculate mean reward points for all eras available
@@ -406,7 +409,9 @@ impl Sync {
       .await
       .map_err(CacheError::RedisPoolError)?;
 
-    let t: Vec<u32> = redis::cmd("ZRANGE")
+    // Get range of members in the sorted set between specific eras
+    // the era format is currently defined by era:points
+    let t: Vec<String> = redis::cmd("ZRANGE")
       .arg(Key::ActiveErasByValidator(stash.clone()))
       .arg(format!("{}", era_index_min))
       .arg(format!("({}", era_index_max))
@@ -415,7 +420,20 @@ impl Sync {
       .await
       .map_err(CacheError::RedisCMDError)?;
 
-    Ok(mean(&t))
+    // To easily calculate the mean we first convert the members Vector to a points Vector
+    // [era1:points1, era2:points2, ..] -> [points1, points2, ..]
+    let v: Vec<u32> = t
+      .into_iter()
+      .map(|x| {
+        let i = x.find(':').unwrap();
+        let points: u32 = String::from(&x[i + 1..x.len()]).parse().unwrap();
+        points
+      })
+      .collect();
+
+    let mean = mean(&v);
+
+    Ok(mean)
   }
 
   /// Sync active validators for specific era
