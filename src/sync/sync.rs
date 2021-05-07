@@ -33,6 +33,7 @@ use regex::Regex;
 use std::{collections::BTreeMap, convert::TryInto, marker::PhantomData, result::Result};
 use std::{thread, time};
 use substrate_subxt::{
+  balances::LocksStoreExt,
   identity::{IdentityOfStoreExt, SuperOfStoreExt},
   session::ValidatorsStore,
   sp_core::storage::StorageKey,
@@ -44,6 +45,7 @@ use substrate_subxt::{
     ErasValidatorPrefsStoreExt, ErasValidatorRewardStoreExt, HistoryDepthStoreExt, PayeeStoreExt,
     RewardDestination, RewardPoint, ValidatorsStoreExt,
   },
+  system::AccountStoreExt,
   Client, ClientBuilder, DefaultNodeRuntime, EventSubscription,
 };
 
@@ -52,6 +54,7 @@ pub const BOARD_ALL_VALIDATORS: &str = "all:val";
 pub const BOARD_TOTAL_POINTS_ERAS: &str = "total:points:era";
 pub const BOARD_MAX_POINTS_ERAS: &str = "max:points:era";
 pub const BOARD_MIN_POINTS_ERAS: &str = "min:points:era";
+pub const BOARD_OWN_STAKE_VALIDATORS: &str = "own:stake:val";
 
 pub async fn create_substrate_node_client(
   config: Config,
@@ -279,18 +282,14 @@ impl Sync {
       let name = self.get_identity(&stash, None).await?;
       validator_data.insert("name".to_string(), name.to_string());
 
-      self
-        .set_eras_validator_stakers(active_era.index, &stash, &mut validator_data)
-        .await?;
-
-      self
-        .set_eras_validator_stakers_clipped(active_era.index, &stash, &mut validator_data)
-        .await?;
+      // Fetch own stake
+      let own_stake = self.get_balance(&stash).await?;
+      validator_data.insert("own_stake".to_string(), own_stake.to_string());
 
       // Cache information for the stash
       let _: () = redis::cmd("HSET")
         .arg(Key::Validator(stash.clone()))
-        .arg(validator_data)
+        .arg(validator_data.clone())
         .query_async(&mut conn as &mut Connection)
         .await
         .map_err(CacheError::RedisCMDError)?;
@@ -359,6 +358,20 @@ impl Sync {
       }
     };
     Ok(display.to_string())
+  }
+
+  async fn get_balance(&self, stash: &AccountId32) -> Result<u128, SyncError> {
+    let client = self.node_client.clone();
+
+    let info = client.account(&stash, None).await?;
+    let locks = client.locks(&stash, None).await?;
+    
+    // filter by bocks with id = "staking "
+    // [BalanceLock { id: "staking ", amount: 1000000000000, reasons: All }]
+    locks.into_iter().filter().map(|x| ).reduce()
+    println!("{:?} - {}", info, stash);
+    println!("{:?} - {}", locks, stash);
+    Ok(info.data.misc_frozen)
   }
 
   /// Calculate inclusion rate for the last depth history eras
@@ -490,11 +503,6 @@ impl Sync {
     }
     info!("Successfully synced {} eras history", history_depth);
 
-    Ok(())
-  }
-
-  /// Calculate statistical insights from eras history
-  async fn eras_stats(&self) -> Result<(), SyncError> {
     Ok(())
   }
 

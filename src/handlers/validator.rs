@@ -38,11 +38,6 @@ pub struct Validator {
     pub controller: String,
     pub name: String,
     pub own_stake: u128,
-    pub total_stake: u128,
-    pub others_stake: u128,
-    pub stakers: u32,
-    pub others_stake_clipped: u128,
-    pub stakers_clipped: u32,
     pub inclusion_rate: f32,
     pub avg_reward_points: f64,
     pub commission: u32,
@@ -65,31 +60,6 @@ impl From<ValidatorCache> for Validator {
                 .get("own_stake")
                 .unwrap_or(&zero)
                 .parse::<u128>()
-                .unwrap_or_default(),
-            total_stake: data
-                .get("total_stake")
-                .unwrap_or(&zero)
-                .parse::<u128>()
-                .unwrap_or_default(),
-            others_stake: data
-                .get("others_stake")
-                .unwrap_or(&zero)
-                .parse::<u128>()
-                .unwrap_or_default(),
-            stakers: data
-                .get("stakers")
-                .unwrap_or(&zero)
-                .parse::<u32>()
-                .unwrap_or_default(),
-            others_stake_clipped: data
-                .get("others_stake_clipped")
-                .unwrap_or(&zero)
-                .parse::<u128>()
-                .unwrap_or_default(),
-            stakers_clipped: data
-                .get("stakers_clipped")
-                .unwrap_or(&zero)
-                .parse::<u32>()
                 .unwrap_or_default(),
             inclusion_rate: data
                 .get("inclusion_rate")
@@ -317,8 +287,11 @@ type Weight = u32;
 /// Position 2 - Higher Reward Points is preferrable
 /// Position 3 - If reward is staked is preferrable
 /// Position 4 - If in active set is preferrable
+/// Position 5 - Higher own stake is preferrable
 type Weights = Vec<Weight>;
-const WEIGHTS_CAPACITY: usize = 5;
+
+/// Current weighs capacity
+const WEIGHTS_CAPACITY: usize = 6;
 
 // Number of elements to return
 type Quantity = u32;
@@ -371,29 +344,45 @@ fn get_board_name(weights: &Weights) -> String {
 }
 
 /// Normalize inclusion rate between 0 - 100
-fn normaliza_inclusion(inclusion_rate: f32) -> u32 {
-    (inclusion_rate * 100.0).round() as u32
+fn normaliza_inclusion(inclusion_rate: f32) -> f64 {
+    (inclusion_rate * 100.0) as f64
 }
 
 /// Normalize commission between 0 - 100
 /// lower commission the better
-fn normaliza_commission(commission: u32) -> u32 {
-    100 - (commission / 10000000)
+fn normaliza_commission(commission: u32) -> f64 {
+    100.0 - (commission / 10000000) as f64
 }
 
 /// Normalize boolean flag between 0 - 100
-fn normalize_flag(flag: bool) -> u32 {
-    flag as u32 * 100
+fn normalize_flag(flag: bool) -> f64 {
+    (flag as u32 * 100) as f64
 }
 
-/// Normalize average reward points between 0 - 100
+/// Normalize average reward points between 0 - 1000
 fn normalize_avg_reward_points(
     avg_reward_points: f64,
     min_points_limit: f64,
     max_points_limit: f64,
-) -> u32 {
-    let value = (avg_reward_points - min_points_limit) / (max_points_limit - min_points_limit);
-    (value * 100.0).round() as u32
+) -> f64 {
+    if avg_reward_points == 0.0 {
+        return 0.0;
+    }
+    100.0 * ((avg_reward_points - min_points_limit) / (max_points_limit - min_points_limit))
+}
+
+/// Normalize own stake points between 0 - 1000
+fn normalize_own_stake(own_stake: u128, min_own_stake: u128, max_own_stake: u128) -> f64 {
+    if own_stake == 0 {
+        return 0.0;
+    }
+    let value =
+        (own_stake as f64 - min_own_stake as f64) / (max_own_stake as f64 - min_own_stake as f64);
+    println!(
+        "normalize_own_stake__ {} {} {} {}",
+        own_stake, min_own_stake, max_own_stake, value
+    );
+    value * 100.0
 }
 
 async fn calculate_avg_points(cache: Data<RedisPool>, name: &str) -> Result<f64, ApiError> {
@@ -407,10 +396,57 @@ async fn calculate_avg_points(cache: Data<RedisPool>, name: &str) -> Result<f64,
         .query_async(&mut conn as &mut Connection)
         .await
         .map_err(CacheError::RedisCMDError)?;
-    // Convert Vec<(EraIndex, u32)> to Vec<u32> to easuily calculate average
+    // Convert Vec<(EraIndex, u32)> to Vec<u32> to easily calculate average
     let scores: Vec<u32> = v.into_iter().map(|(_, score)| score).collect();
     let avg = stats::mean(&scores);
     Ok(avg)
+}
+
+async fn calculate_min_own_stake_limit(
+    cache: Data<RedisPool>,
+    name: &str,
+) -> Result<u128, ApiError> {
+    let mut conn = get_conn(&cache).await?;
+    let v: Vec<(String, u128)> = redis::cmd("ZRANGE")
+        .arg(sync::Key::BoardAtEra(0, name.to_string()))
+        .arg("-inf")
+        .arg("+inf")
+        .arg("BYSCORE")
+        .arg("LIMIT")
+        .arg("0")
+        .arg("1")
+        .arg("WITHSCORES")
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+    if v.len() == 0 {
+        return Ok(0);
+    }
+    Ok(v[0].1)
+}
+
+async fn calculate_max_own_stake_limit(
+    cache: Data<RedisPool>,
+    name: &str,
+) -> Result<u128, ApiError> {
+    let mut conn = get_conn(&cache).await?;
+    let v: Vec<(String, u128)> = redis::cmd("ZRANGE")
+        .arg(sync::Key::BoardAtEra(0, name.to_string()))
+        .arg("+inf")
+        .arg("-inf")
+        .arg("BYSCORE")
+        .arg("REV")
+        .arg("LIMIT")
+        .arg("0")
+        .arg("1")
+        .arg("WITHSCORES")
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+    if v.len() == 0 {
+        return Ok(0);
+    }
+    Ok(v[0].1)
 }
 
 async fn generate_board(
@@ -422,7 +458,14 @@ async fn generate_board(
 
     let max_points_limit = calculate_avg_points(cache.clone(), sync::BOARD_MAX_POINTS_ERAS).await?;
     let min_points_limit = calculate_avg_points(cache.clone(), sync::BOARD_MIN_POINTS_ERAS).await?;
+    let min_own_stake_limit =
+        calculate_min_own_stake_limit(cache.clone(), sync::BOARD_OWN_STAKE_VALIDATORS).await?;
+    let max_own_stake_limit =
+        calculate_max_own_stake_limit(cache.clone(), sync::BOARD_OWN_STAKE_VALIDATORS).await?;
 
+    println!("min_own_stake_limit {}", min_own_stake_limit);
+    println!("max_own_stake_limit {}", max_own_stake_limit);
+    println!("weights[5] {}", weights[5]);
     let stashes: Vec<String> = redis::cmd("ZRANGE")
         .arg(sync::Key::BoardAtEra(
             era_index,
@@ -451,15 +494,31 @@ async fn generate_board(
             continue;
         }
 
-        let score = normaliza_inclusion(validator.inclusion_rate) * weights[0]
-            + normaliza_commission(validator.commission) * weights[1]
+        println!("stash {}", stash);
+        println!(
+            "normalize_own_stake {}",
+            normalize_own_stake(
+                validator.own_stake,
+                min_own_stake_limit,
+                max_own_stake_limit,
+            )
+        );
+        let score = normaliza_inclusion(validator.inclusion_rate) * weights[0] as f64
+            + normaliza_commission(validator.commission) * weights[1] as f64
             + normalize_avg_reward_points(
                 validator.avg_reward_points,
                 min_points_limit,
                 max_points_limit,
-            ) * weights[2]
-            + normalize_flag(validator.reward_staked) * weights[3]
-            + normalize_flag(validator.active) * weights[4];
+            ) * weights[2] as f64
+            + normalize_flag(validator.reward_staked) * weights[3] as f64
+            + normalize_flag(validator.active) * weights[4] as f64
+            + normalize_own_stake(
+                validator.own_stake,
+                min_own_stake_limit,
+                max_own_stake_limit,
+            ) * weights[5] as f64;
+
+        println!("score {}", score);
 
         let _: () = redis::cmd("ZADD")
             .arg(key.to_string())
