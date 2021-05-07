@@ -27,14 +27,14 @@ use async_recursion::async_recursion;
 use async_std::task;
 use chrono::Utc;
 use codec::Encode;
-use log::{debug, error, warn, info};
+use log::{debug, error, info, warn};
 use redis::aio::Connection;
 use regex::Regex;
 use std::{collections::BTreeMap, convert::TryInto, marker::PhantomData, result::Result};
 use std::{thread, time};
 use substrate_subxt::{
   balances::LocksStoreExt,
-  identity::{IdentityOfStoreExt, SuperOfStoreExt},
+  identity::{IdentityOfStoreExt, Judgement, SuperOfStoreExt},
   session::ValidatorsStore,
   sp_core::storage::StorageKey,
   sp_core::Decode,
@@ -308,12 +308,12 @@ impl Sync {
       // Cache statistical boards
       if own_stake != 0 {
         let _: () = redis::cmd("ZADD")
-        .arg(Key::BoardAtEra(0, BOARD_OWN_STAKE_VALIDATORS.to_string()))
-        .arg(own_stake.to_string()) // score
-        .arg(stash.to_string()) // member
-        .query_async(&mut conn as &mut Connection)
-        .await
-        .map_err(CacheError::RedisCMDError)?;
+          .arg(Key::BoardAtEra(0, BOARD_OWN_STAKE_VALIDATORS.to_string()))
+          .arg(own_stake.to_string()) // score
+          .arg(stash.to_string()) // member
+          .query_async(&mut conn as &mut Connection)
+          .await
+          .map_err(CacheError::RedisCMDError)?;
       }
 
       debug!("Successfully synced validator with stash {}", stash);
@@ -335,20 +335,12 @@ impl Sync {
   ) -> Result<String, SyncError> {
     let client = self.node_client.clone();
 
-    let re = Regex::new(r"[\r\n\f]+").unwrap();
-    // TODO
-    // const sanitized = thisIdentity.display
-    // .replace(/[^\x20-\x7E]/g, '')
-    // .replace(/-/g, ' ')
-    // .replace(/_/g, ' ')
-    // .split(' ')
-    // .map((p) => p.trim())
-    // .filter((v) => !!v);
+    let re = Regex::new(r"[^\x20-\x7E]").unwrap();
     let display: String = match client.identity_of(stash.clone(), None).await? {
       Some(registration) => {
         let mut parent =
           String::from_utf8(registration.info.display.encode()).unwrap_or("-".to_string());
-        parent = re.replace_all(&parent, "").to_string();
+        parent = re.replace_all(&parent, "").trim().to_string();
         if let Some(n) = sub_account_name {
           format!("{}/{}", parent, n)
         } else {
@@ -358,7 +350,7 @@ impl Sync {
       None => {
         if let Some((parent_account, data)) = client.super_of(stash.clone(), None).await? {
           let mut sub_account_name = String::from_utf8(data.encode()).unwrap();
-          sub_account_name = re.replace_all(&sub_account_name, "").to_string();
+          sub_account_name = re.replace_all(&sub_account_name, "").trim().to_string();
           return self
             .get_identity(&parent_account, Some(sub_account_name))
             .await;
