@@ -40,9 +40,9 @@ use substrate_subxt::{
   sp_runtime::AccountId32,
   staking::{
     ActiveEraStoreExt, BondedStoreExt, EraIndex, EraPayoutEvent, ErasRewardPointsStoreExt,
-    ErasStakersStoreExt, ErasTotalStakeStoreExt, ErasValidatorPrefsStoreExt,
-    ErasValidatorRewardStoreExt, HistoryDepthStoreExt, PayeeStoreExt, RewardDestination,
-    RewardPoint, ValidatorsStoreExt,
+    ErasStakersClippedStoreExt, ErasStakersStoreExt, ErasTotalStakeStoreExt,
+    ErasValidatorPrefsStoreExt, ErasValidatorRewardStoreExt, HistoryDepthStoreExt, PayeeStoreExt,
+    RewardDestination, RewardPoint, ValidatorsStoreExt,
   },
   Client, ClientBuilder, DefaultNodeRuntime, EventSubscription,
 };
@@ -63,14 +63,13 @@ fn get_account_id_from_storage_key(key: StorageKey) -> AccountId32 {
   AccountId32::new(v)
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Key {
   ActiveEra,
   Era(EraIndex),
   ValidatorAtEra(EraIndex, AccountId32),
+  BoardAtEra(EraIndex, String),
   ValidatorAtEraScan(AccountId32),
-  AllValidatorsByEra(EraIndex),
-  ActiveValidatorsByEra(EraIndex),
   Validator(AccountId32),
   ActiveErasByValidator(AccountId32),
 }
@@ -83,9 +82,8 @@ impl std::fmt::Display for Key {
       Self::ValidatorAtEra(era_index, stash_account) => {
         write!(f, "{}:era:{}:val", era_index, stash_account)
       }
+      Self::BoardAtEra(era_index, name) => write!(f, "{}:era:{}:board", era_index, name),
       Self::ValidatorAtEraScan(stash_account) => write!(f, "*:era:{}:val", stash_account),
-      Self::AllValidatorsByEra(era_index) => write!(f, "{}:era:vals:all", era_index),
-      Self::ActiveValidatorsByEra(era_index) => write!(f, "{}:era:vals:active", era_index),
       Self::Validator(stash_account) => write!(f, "{}:val", stash_account),
       Self::ActiveErasByValidator(stash_account) => write!(f, "{}:val:eras:active", stash_account),
     }
@@ -214,49 +212,6 @@ impl Sync {
     Ok(active_era.index)
   }
 
-  /// Add stash to the list of validators available in era
-  async fn add_stash_to_era(&self, stash: &AccountId32, key: Key) -> Result<(), SyncError> {
-    let mut conn = self
-      .cache_pool
-      .get()
-      .await
-      .map_err(CacheError::RedisPoolError)?;
-
-    let _: () = redis::cmd("SADD")
-      .arg(key)
-      .arg(stash.to_string())
-      .query_async(&mut conn as &mut Connection)
-      .await
-      .map_err(CacheError::RedisCMDError)?;
-
-    Ok(())
-  }
-
-  /// Add era index to the list of eras where stash was active
-  async fn add_era_reward_points_to_stash(
-    &self,
-    stash: &AccountId32,
-    era_index: EraIndex,
-    reward_points: u32,
-  ) -> Result<(), SyncError> {
-    let mut conn = self
-      .cache_pool
-      .get()
-      .await
-      .map_err(CacheError::RedisPoolError)?;
-
-    let member = format!("{}:{}", era_index, reward_points);
-    let _: () = redis::cmd("ZADD")
-      .arg(Key::ActiveErasByValidator(stash.clone()))
-      .arg(era_index) // score
-      .arg(member) // member
-      .query_async(&mut conn as &mut Connection)
-      .await
-      .map_err(CacheError::RedisCMDError)?;
-
-    Ok(())
-  }
-
   /// Sync all validators currently available
   async fn validators(&self) -> Result<(), SyncError> {
     let mut conn = self
@@ -270,6 +225,13 @@ impl Sync {
     let active_era = client.active_era(None).await?;
     let mut validators = client.validators_iter(None).await?;
     while let Some((key, validator_prefs)) = validators.next().await? {
+      let mut validator_data: BTreeMap<String, String> = BTreeMap::new();
+      validator_data.insert(
+        "commission".to_string(),
+        validator_prefs.commission.deconstruct().to_string(),
+      );
+      validator_data.insert("blocked".to_string(), validator_prefs.blocked.to_string());
+
       let stash = get_account_id_from_storage_key(key);
       // Sync controller
       let controller = match client.bonded(stash.clone(), None).await? {
@@ -281,6 +243,7 @@ impl Sync {
           )))
         }
       };
+      validator_data.insert("controller".to_string(), controller.to_string());
 
       // Sync payee - where the reward payment should be made
       let reward_staked = if RewardDestination::Staked == client.payee(stash.clone(), None).await? {
@@ -288,41 +251,51 @@ impl Sync {
       } else {
         false
       };
+      validator_data.insert("reward_staked".to_string(), reward_staked.to_string());
 
       // Calculate inclusion rate
       let inclusion_rate = self
         .calculate_inclusion_rate(&stash, active_era.index - history_depth, active_era.index)
         .await?;
+      validator_data.insert("inclusion_rate".to_string(), inclusion_rate.to_string());
 
       // Calculate mean reward points
       let mean_reward_points = self
         .calculate_mean_reward_points(&stash, active_era.index - history_depth, active_era.index)
         .await?;
+      validator_data.insert(
+        "mean_reward_points".to_string(),
+        mean_reward_points.to_string(),
+      );
 
       // Fetch identity
       let name = self.get_identity(&stash, None).await?;
+      validator_data.insert("name".to_string(), name.to_string());
+
+      self
+        .set_eras_validator_stakers(active_era.index, &stash, &mut validator_data)
+        .await?;
+
+      self
+        .set_eras_validator_stakers_clipped(active_era.index, &stash, &mut validator_data)
+        .await?;
+
       // Cache information for the stash
       let _: () = redis::cmd("HSET")
         .arg(Key::Validator(stash.clone()))
-        .arg(&[
-          ("controller", controller.to_string()),
-          ("name", name.to_string()),
-          ("inclusion_rate", inclusion_rate.to_string()),
-          ("mean_reward_points", mean_reward_points.to_string()),
-          ("reward_staked", reward_staked.to_string()),
-          (
-            "commission",
-            validator_prefs.commission.deconstruct().to_string(),
-          ),
-          ("blocked", validator_prefs.blocked.to_string()),
-        ])
+        .arg(validator_data)
         .query_async(&mut conn as &mut Connection)
         .await
         .map_err(CacheError::RedisCMDError)?;
 
-      self
-        .add_stash_to_era(&stash, Key::AllValidatorsByEra(active_era.index))
-        .await?;
+      // Add stash to the sorted set board named: all
+      let _: () = redis::cmd("ZADD")
+        .arg(Key::BoardAtEra(active_era.index, "all".to_string()))
+        .arg(0) // score
+        .arg(stash.to_string()) // member
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
 
       debug!("Successfully synced validator with stash {}", stash);
     }
@@ -458,14 +431,19 @@ impl Sync {
       }
     };
     for stash in validators.iter() {
-      self
-        .add_stash_to_era(&stash, Key::ActiveValidatorsByEra(active_era.index))
-        .await?;
-
       // Cache information for the stash
       let _: () = redis::cmd("HSET")
         .arg(Key::Validator(stash.clone()))
         .arg(&[("active", "true")])
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+      // Add stash to the sorted set board named: active
+      let _: () = redis::cmd("ZADD")
+        .arg(Key::BoardAtEra(active_era.index, "active".to_string()))
+        .arg(0) // score
+        .arg(stash.to_string()) // member
         .query_async(&mut conn as &mut Connection)
         .await
         .map_err(CacheError::RedisCMDError)?;
@@ -601,14 +579,21 @@ impl Sync {
     for (stash, points) in era_reward_points.individual.iter() {
       reward_points.push(*points);
       let mut validator_data: BTreeMap<String, String> = BTreeMap::new();
-      validator_data.insert(String::from("active"), String::from("true"));
-      validator_data.insert(String::from("reward_points"), points.to_string());
+      validator_data.insert("active".to_string(), "true".to_string());
+      validator_data.insert("reward_points".to_string(), points.to_string());
+
       self
         .set_eras_validator_prefs(era_index, stash, &mut validator_data)
         .await?;
+
       self
         .set_eras_validator_stakers(era_index, stash, &mut validator_data)
         .await?;
+
+      self
+        .set_eras_validator_stakers_clipped(era_index, stash, &mut validator_data)
+        .await?;
+
       let _: () = redis::cmd("HSET")
         .arg(Key::ValidatorAtEra(era_index, stash.clone()))
         .arg(validator_data)
@@ -616,9 +601,15 @@ impl Sync {
         .await
         .map_err(CacheError::RedisCMDError)?;
 
-      self
-        .add_era_reward_points_to_stash(stash, era_index, *points)
-        .await?;
+      let member = format!("{}:{}", era_index, points);
+      let _: () = redis::cmd("ZADD")
+        .arg(Key::ActiveErasByValidator(stash.clone()))
+        .arg(era_index) // score
+        .arg(member) // member
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
       debug!(
         "Successfully synced validator reward points with stash {} in era {}",
         stash, era_index
@@ -662,10 +653,10 @@ impl Sync {
       .eras_validator_prefs(era_index, stash_cloned, None)
       .await?;
     data.insert(
-      String::from("commission"),
+      "commission".to_string(),
       validator_prefs.commission.deconstruct().to_string(),
     );
-    data.insert(String::from("blocked"), validator_prefs.blocked.to_string());
+    data.insert("blocked".to_string(), validator_prefs.blocked.to_string());
 
     debug!(
       "Successfully synced validator prefs with stash {} in era {}",
@@ -683,18 +674,48 @@ impl Sync {
   ) -> Result<(), SyncError> {
     let client = self.node_client.clone();
 
-    let stash_cloned = stash.clone();
-    let exposure = client.eras_stakers(era_index, stash_cloned, None).await?;
+    let exposure = client.eras_stakers(era_index, stash.clone(), None).await?;
     let mut others_stake: u128 = 0;
     for individual_exposure in exposure.others.iter() {
       others_stake += individual_exposure.value;
     }
-    data.insert(String::from("total_stake"), exposure.total.to_string());
-    data.insert(String::from("own_stake"), exposure.own.to_string());
-    data.insert(String::from("others_stake"), others_stake.to_string());
+    data.insert("total_stake".to_string(), exposure.total.to_string());
+    data.insert("own_stake".to_string(), exposure.own.to_string());
+    data.insert("others_stake".to_string(), others_stake.to_string());
+    data.insert("stakers".to_string(), exposure.others.len().to_string());
 
     debug!(
       "Successfully synced validator total stake with stash {} in era {}",
+      stash, era_index
+    );
+
+    Ok(())
+  }
+
+  /// Sync <ErasStakersClipped<T>>;
+  async fn set_eras_validator_stakers_clipped<'a>(
+    &self,
+    era_index: EraIndex,
+    stash: &AccountId32,
+    data: &'a mut BTreeMap<String, String>,
+  ) -> Result<(), SyncError> {
+    let client = self.node_client.clone();
+
+    let exposure = client
+      .eras_stakers_clipped(era_index, stash.clone(), None)
+      .await?;
+    let mut others_stake: u128 = 0;
+    for individual_exposure in exposure.others.iter() {
+      others_stake += individual_exposure.value;
+    }
+    data.insert("others_stake_clipped".to_string(), others_stake.to_string());
+    data.insert(
+      "stakers_clipped".to_string(),
+      exposure.others.len().to_string(),
+    );
+
+    debug!(
+      "Successfully synced validator clipped stake with stash {} in era {}",
       stash, era_index
     );
 
