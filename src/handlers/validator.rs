@@ -22,7 +22,7 @@
 use crate::cache::{get_conn, RedisPool};
 use crate::errors::{ApiError, CacheError};
 use crate::helpers::respond_json;
-use crate::sync::sync::Key;
+use crate::sync::{stats, sync};
 use actix_web::web::{Data, Json, Path, Query};
 use redis::aio::Connection;
 use serde::{de::Deserializer, Deserialize, Serialize};
@@ -135,7 +135,7 @@ pub async fn get_validator(
     let mut conn = get_conn(&cache).await?;
     let stash = AccountId32::from_str(&*stash.to_string())?;
     let mut data: ValidatorCache = redis::cmd("HGETALL")
-        .arg(Key::Validator(stash.clone()))
+        .arg(sync::Key::Validator(stash.clone()))
         .query_async(&mut conn as &mut Connection)
         .await
         .map_err(CacheError::RedisCMDError)?;
@@ -253,7 +253,7 @@ pub async fn get_validator_eras(
             let (cursor, keys): (i32, Vec<String>) = redis::cmd("SCAN")
                 .arg(cursor)
                 .arg("MATCH")
-                .arg(Key::ValidatorAtEraScan(stash.clone()))
+                .arg(sync::Key::ValidatorAtEraScan(stash.clone()))
                 .arg("COUNT")
                 .arg("100")
                 .query_async(&mut conn as &mut Connection)
@@ -314,9 +314,11 @@ type Weight = u32;
 /// the weight for the respective criteria
 /// Position 0 - Higher Inclusion rate is preferrable
 /// Position 1 - Lower Commission is preferrable
-/// Position 2 - if reward is staked is preferrable
-/// Position 3 - if in active set is preferrable
+/// Position 2 - Higher Reward Points is preferrable
+/// Position 3 - If reward is staked is preferrable
+/// Position 4 - If in active set is preferrable
 type Weights = Vec<Weight>;
+const WEIGHTS_CAPACITY: usize = 5;
 
 // Number of elements to return
 type Quantity = u32;
@@ -335,20 +337,18 @@ where
     D: Deserializer<'de>,
 {
     Deserialize::deserialize(d).map(|x: Option<_>| {
-        let weights_str = x.unwrap_or("".to_string());
+        let weights_as_csv = x.unwrap_or("".to_string());
 
-        let weights_vs: Vec<&str> = weights_str.split(",").collect();
+        let mut weights_as_strvec: Vec<&str> = weights_as_csv.split(",").collect();
+        weights_as_strvec.resize(WEIGHTS_CAPACITY, "5");
 
-        weights_vs
-            .into_iter()
-            .map(|y| {
-                let weight: u32 = String::from(y).parse().unwrap_or(5);
-                if weight > 10 {
-                    return 10;
-                }
-                weight
-            })
-            .collect()
+        let mut weights: Weights = Vec::with_capacity(WEIGHTS_CAPACITY);
+        for i in 0..WEIGHTS_CAPACITY {
+            let weight: u32 = weights_as_strvec[i].to_string().parse().unwrap_or(5);
+            let weight = if weight > 10 { 10 } else { weight };
+            weights.push(weight);
+        }
+        weights
     })
 }
 
@@ -370,13 +370,47 @@ fn get_board_name(weights: &Weights) -> String {
         .collect()
 }
 
+/// Normalize inclusion rate between 0 - 100
 fn normaliza_inclusion(inclusion_rate: f32) -> u32 {
-    let r = inclusion_rate * 100.0;
-    r.round() as u32
+    (inclusion_rate * 100.0).round() as u32
 }
 
+/// Normalize commission between 0 - 100
+/// lower commission the better
 fn normaliza_commission(commission: u32) -> u32 {
     100 - (commission / 10000000)
+}
+
+/// Normalize boolean flag between 0 - 100
+fn normalize_flag(flag: bool) -> u32 {
+    flag as u32 * 100
+}
+
+/// Normalize average reward points between 0 - 100
+fn normalize_avg_reward_points(
+    avg_reward_points: f64,
+    min_points_limit: f64,
+    max_points_limit: f64,
+) -> u32 {
+    let value = (avg_reward_points - min_points_limit) / (max_points_limit - min_points_limit);
+    (value * 100.0).round() as u32
+}
+
+async fn calculate_avg_points(cache: Data<RedisPool>, name: &str) -> Result<f64, ApiError> {
+    let mut conn = get_conn(&cache).await?;
+    let v: Vec<(EraIndex, u32)> = redis::cmd("ZRANGE")
+        .arg(sync::Key::BoardAtEra(0, name.to_string()))
+        .arg("-inf")
+        .arg("+inf")
+        .arg("BYSCORE")
+        .arg("WITHSCORES")
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+    // Convert Vec<(EraIndex, u32)> to Vec<u32> to easuily calculate average
+    let scores: Vec<u32> = v.into_iter().map(|(_, score)| score).collect();
+    let avg = stats::mean(&scores);
+    Ok(avg)
 }
 
 async fn generate_board(
@@ -386,8 +420,14 @@ async fn generate_board(
 ) -> Result<(), ApiError> {
     let mut conn = get_conn(&cache).await?;
 
+    let max_points_limit = calculate_avg_points(cache.clone(), sync::BOARD_MAX_POINTS_ERAS).await?;
+    let min_points_limit = calculate_avg_points(cache.clone(), sync::BOARD_MIN_POINTS_ERAS).await?;
+
     let stashes: Vec<String> = redis::cmd("ZRANGE")
-        .arg(Key::BoardAtEra(era_index, Queries::All.to_string()))
+        .arg(sync::Key::BoardAtEra(
+            era_index,
+            sync::BOARD_ALL_VALIDATORS.to_string(),
+        ))
         .arg("-inf")
         .arg("+inf")
         .arg("BYSCORE")
@@ -395,11 +435,11 @@ async fn generate_board(
         .await
         .map_err(CacheError::RedisCMDError)?;
 
-    let key = Key::BoardAtEra(era_index, get_board_name(weights));
+    let key = sync::Key::BoardAtEra(era_index, get_board_name(weights));
     for stash in stashes {
         let stash = AccountId32::from_str(&*stash.to_string())?;
         let data: ValidatorCache = redis::cmd("HGETALL")
-            .arg(Key::Validator(stash.clone()))
+            .arg(sync::Key::Validator(stash.clone()))
             .query_async(&mut conn as &mut Connection)
             .await
             .map_err(CacheError::RedisCMDError)?;
@@ -413,18 +453,13 @@ async fn generate_board(
 
         let score = normaliza_inclusion(validator.inclusion_rate) * weights[0]
             + normaliza_commission(validator.commission) * weights[1]
-            + validator.reward_staked as u32 * weights[2] * 100
-            + validator.active as u32 * weights[3] * 100;
-
-        println!(
-            "{} * {} + {} * {} = {} -> {}",
-            normaliza_inclusion(validator.inclusion_rate),
-            weights[0],
-            normaliza_commission(validator.commission),
-            weights[1],
-            score,
-            stash.to_string()
-        );
+            + normalize_avg_reward_points(
+                validator.avg_reward_points,
+                min_points_limit,
+                max_points_limit,
+            ) * weights[2]
+            + normalize_flag(validator.reward_staked) * weights[3]
+            + normalize_flag(validator.active) * weights[4];
 
         let _: () = redis::cmd("ZADD")
             .arg(key.to_string())
@@ -445,15 +480,17 @@ pub async fn get_validators(
 ) -> Result<Json<ValidatorsResponse>, ApiError> {
     let mut conn = get_conn(&cache).await?;
     let era_index: EraIndex = redis::cmd("GET")
-        .arg(Key::ActiveEra)
+        .arg(sync::Key::ActiveEra)
         .query_async(&mut conn as &mut Connection)
         .await
         .map_err(CacheError::RedisCMDError)?;
 
     let key = match params.q {
-        Queries::Active => Key::BoardAtEra(era_index, Queries::Active.to_string()),
-        Queries::All => Key::BoardAtEra(era_index, Queries::All.to_string()),
-        Queries::Board => Key::BoardAtEra(era_index, get_board_name(&params.w)),
+        Queries::Active => {
+            sync::Key::BoardAtEra(era_index, sync::BOARD_ACTIVE_VALIDATORS.to_string())
+        }
+        Queries::All => sync::Key::BoardAtEra(era_index, sync::BOARD_ALL_VALIDATORS.to_string()),
+        Queries::Board => sync::Key::BoardAtEra(era_index, get_board_name(&params.w)),
     };
 
     let exists: bool = redis::cmd("EXISTS")

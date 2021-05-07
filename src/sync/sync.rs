@@ -47,6 +47,12 @@ use substrate_subxt::{
   Client, ClientBuilder, DefaultNodeRuntime, EventSubscription,
 };
 
+pub const BOARD_ACTIVE_VALIDATORS: &str = "active:val";
+pub const BOARD_ALL_VALIDATORS: &str = "all:val";
+pub const BOARD_TOTAL_POINTS_ERAS: &str = "total:points:era";
+pub const BOARD_MAX_POINTS_ERAS: &str = "max:points:era";
+pub const BOARD_MIN_POINTS_ERAS: &str = "min:points:era";
+
 pub async fn create_substrate_node_client(
   config: Config,
 ) -> Result<Client<DefaultNodeRuntime>, substrate_subxt::Error> {
@@ -82,8 +88,8 @@ impl std::fmt::Display for Key {
       Self::ValidatorAtEra(era_index, stash_account) => {
         write!(f, "{}:era:{}:val", era_index, stash_account)
       }
-      Self::BoardAtEra(era_index, name) => write!(f, "{}:era:{}:board", era_index, name),
       Self::ValidatorAtEraScan(stash_account) => write!(f, "*:era:{}:val", stash_account),
+      Self::BoardAtEra(era_index, name) => write!(f, "{}:era:{}:board", era_index, name),
       Self::Validator(stash_account) => write!(f, "{}:val", stash_account),
       Self::ActiveErasByValidator(stash_account) => write!(f, "{}:val:eras:active", stash_account),
     }
@@ -233,6 +239,7 @@ impl Sync {
       validator_data.insert("blocked".to_string(), validator_prefs.blocked.to_string());
 
       let stash = get_account_id_from_storage_key(key);
+
       // Sync controller
       let controller = match client.bonded(stash.clone(), None).await? {
         Some(c) => c,
@@ -290,7 +297,10 @@ impl Sync {
 
       // Add stash to the sorted set board named: all
       let _: () = redis::cmd("ZADD")
-        .arg(Key::BoardAtEra(active_era.index, "all".to_string()))
+        .arg(Key::BoardAtEra(
+          active_era.index,
+          BOARD_ALL_VALIDATORS.to_string(),
+        ))
         .arg(0) // score
         .arg(stash.to_string()) // member
         .query_async(&mut conn as &mut Connection)
@@ -317,6 +327,14 @@ impl Sync {
     let client = self.node_client.clone();
 
     let re = Regex::new(r"[\r\n\f]+").unwrap();
+    // TODO
+    // const sanitized = thisIdentity.display
+    // .replace(/[^\x20-\x7E]/g, '')
+    // .replace(/-/g, ' ')
+    // .replace(/_/g, ' ')
+    // .split(' ')
+    // .map((p) => p.trim())
+    // .filter((v) => !!v);
     let display: String = match client.identity_of(stash.clone(), None).await? {
       Some(registration) => {
         let mut parent =
@@ -404,9 +422,9 @@ impl Sync {
       })
       .collect();
 
-    let mean = mean(&v);
+    let avg = mean(&v);
 
-    Ok(mean)
+    Ok(avg)
   }
 
   /// Sync active validators for specific era
@@ -441,7 +459,10 @@ impl Sync {
 
       // Add stash to the sorted set board named: active
       let _: () = redis::cmd("ZADD")
-        .arg(Key::BoardAtEra(active_era.index, "active".to_string()))
+        .arg(Key::BoardAtEra(
+          active_era.index,
+          BOARD_ACTIVE_VALIDATORS.to_string(),
+        ))
         .arg(0) // score
         .arg(stash.to_string()) // member
         .query_async(&mut conn as &mut Connection)
@@ -469,6 +490,11 @@ impl Sync {
     }
     info!("Successfully synced {} eras history", history_depth);
 
+    Ok(())
+  }
+
+  /// Calculate statistical insights from eras history
+  async fn eras_stats(&self) -> Result<(), SyncError> {
     Ok(())
   }
 
@@ -615,32 +641,47 @@ impl Sync {
         stash, era_index
       );
     }
-    
     let mut era_data: BTreeMap<String, String> = BTreeMap::new();
-    era_data.insert(
-      "total_reward_points".to_string(),
-      era_reward_points.total.to_string(),
-    );
-    era_data.insert(
-      "min_reward_points".to_string(),
-      min(&reward_points).to_string(),
-    );
-    era_data.insert(
-      "max_reward_points".to_string(),
-      max(&reward_points).to_string(),
-    );
-    era_data.insert(
-      "avg_reward_points".to_string(),
-      mean(&reward_points).to_string(),
-    );
-    era_data.insert(
-      "median_reward_points".to_string(),
-      median(&mut reward_points).to_string(),
-    );
+    let total = era_reward_points.total;
+    era_data.insert("total_reward_points".to_string(), total.to_string());
+    let min = min(&reward_points);
+    era_data.insert("min_reward_points".to_string(), min.to_string());
+    let max = max(&reward_points);
+    era_data.insert("max_reward_points".to_string(), max.to_string());
+    let avg = mean(&reward_points);
+    era_data.insert("avg_reward_points".to_string(), avg.to_string());
+    let median = median(&mut reward_points);
+    era_data.insert("median_reward_points".to_string(), median.to_string());
 
     let _: () = redis::cmd("HSET")
       .arg(Key::Era(era_index))
       .arg(era_data)
+      .query_async(&mut conn as &mut Connection)
+      .await
+      .map_err(CacheError::RedisCMDError)?;
+
+    // Cache statistical boards
+    // TODO: delete old eras
+    let _: () = redis::cmd("ZADD")
+      .arg(Key::BoardAtEra(0, BOARD_TOTAL_POINTS_ERAS.to_string()))
+      .arg(total) // score
+      .arg(era_index) // member
+      .query_async(&mut conn as &mut Connection)
+      .await
+      .map_err(CacheError::RedisCMDError)?;
+
+    let _: () = redis::cmd("ZADD")
+      .arg(Key::BoardAtEra(0, BOARD_MAX_POINTS_ERAS.to_string()))
+      .arg(max) // score
+      .arg(era_index) // member
+      .query_async(&mut conn as &mut Connection)
+      .await
+      .map_err(CacheError::RedisCMDError)?;
+
+    let _: () = redis::cmd("ZADD")
+      .arg(Key::BoardAtEra(0, BOARD_MIN_POINTS_ERAS.to_string()))
+      .arg(min) // score
+      .arg(era_index) // member
       .query_async(&mut conn as &mut Connection)
       .await
       .map_err(CacheError::RedisCMDError)?;

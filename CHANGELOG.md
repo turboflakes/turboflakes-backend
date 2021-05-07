@@ -11,7 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Change active and all validators set to sorted set
 - Add stakers clipped
 - Add number of stakers and clipped stakers
-- rename mean by average or short avg
+- Rename mean by average or short avg
+- Name generic board names
+- Normalize average reward points based on historic era points
 
 ## [0.1.0] - 2021-04-19
 
