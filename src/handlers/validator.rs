@@ -44,7 +44,7 @@ pub struct Validator {
     pub others_stake_clipped: u128,
     pub stakers_clipped: u32,
     pub inclusion_rate: f32,
-    pub mean_reward_points: f64,
+    pub avg_reward_points: f64,
     pub commission: u32,
     pub blocked: bool,
     pub active: bool,
@@ -96,8 +96,8 @@ impl From<ValidatorCache> for Validator {
                 .unwrap_or(&zero)
                 .parse::<f32>()
                 .unwrap_or_default(),
-            mean_reward_points: data
-                .get("mean_reward_points")
+            avg_reward_points: data
+                .get("avg_reward_points")
                 .unwrap_or(&zero)
                 .parse::<f64>()
                 .unwrap_or_default(),

@@ -259,13 +259,13 @@ impl Sync {
         .await?;
       validator_data.insert("inclusion_rate".to_string(), inclusion_rate.to_string());
 
-      // Calculate mean reward points
-      let mean_reward_points = self
-        .calculate_mean_reward_points(&stash, active_era.index - history_depth, active_era.index)
+      // Calculate average reward points
+      let avg_reward_points = self
+        .calculate_avg_reward_points(&stash, active_era.index - history_depth, active_era.index)
         .await?;
       validator_data.insert(
-        "mean_reward_points".to_string(),
-        mean_reward_points.to_string(),
+        "avg_reward_points".to_string(),
+        avg_reward_points.to_string(),
       );
 
       // Fetch identity
@@ -369,8 +369,8 @@ impl Sync {
     Ok(inclusion)
   }
 
-  /// Calculate mean reward points for all eras available
-  async fn calculate_mean_reward_points(
+  /// Calculate average reward points for all eras available
+  async fn calculate_avg_reward_points(
     &self,
     stash: &AccountId32,
     era_index_min: EraIndex,
@@ -615,18 +615,32 @@ impl Sync {
         stash, era_index
       );
     }
+    
+    let mut era_data: BTreeMap<String, String> = BTreeMap::new();
+    era_data.insert(
+      "total_reward_points".to_string(),
+      era_reward_points.total.to_string(),
+    );
+    era_data.insert(
+      "min_reward_points".to_string(),
+      min(&reward_points).to_string(),
+    );
+    era_data.insert(
+      "max_reward_points".to_string(),
+      max(&reward_points).to_string(),
+    );
+    era_data.insert(
+      "avg_reward_points".to_string(),
+      mean(&reward_points).to_string(),
+    );
+    era_data.insert(
+      "median_reward_points".to_string(),
+      median(&mut reward_points).to_string(),
+    );
+
     let _: () = redis::cmd("HSET")
       .arg(Key::Era(era_index))
-      .arg(&[
-        ("total_reward_points", era_reward_points.total.to_string()),
-        ("min_reward_points", min(&reward_points).to_string()),
-        ("max_reward_points", max(&reward_points).to_string()),
-        ("mean_reward_points", mean(&reward_points).to_string()),
-        (
-          "median_reward_points",
-          median(&mut reward_points).to_string(),
-        ),
-      ])
+      .arg(era_data)
       .query_async(&mut conn as &mut Connection)
       .await
       .map_err(CacheError::RedisCMDError)?;

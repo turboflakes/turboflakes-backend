@@ -37,8 +37,7 @@ pub struct EraResponse {
     pub total_reward_points: u32,
     pub min_reward_points: u32,
     pub max_reward_points: u32,
-    pub mean_reward_points: u32,
-    pub median_reward_points: u32,
+    pub avg_reward_points: u32,
 }
 
 impl From<EraCache> for EraResponse {
@@ -75,13 +74,8 @@ impl From<EraCache> for EraResponse {
                 .unwrap_or(&zero)
                 .parse::<u32>()
                 .unwrap_or_default(),
-            mean_reward_points: data
-                .get("mean_reward_points")
-                .unwrap_or(&zero)
-                .parse::<u32>()
-                .unwrap_or_default(),
-            median_reward_points: data
-                .get("median_reward_points")
+            avg_reward_points: data
+                .get("avg_reward_points")
                 .unwrap_or(&zero)
                 .parse::<u32>()
                 .unwrap_or_default(),
