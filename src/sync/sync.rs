@@ -27,7 +27,7 @@ use async_recursion::async_recursion;
 use async_std::task;
 use chrono::Utc;
 use codec::Encode;
-use log::{debug, error, info};
+use log::{debug, error, warn, info};
 use redis::aio::Connection;
 use regex::Regex;
 use std::{collections::BTreeMap, convert::TryInto, marker::PhantomData, result::Result};
@@ -45,7 +45,6 @@ use substrate_subxt::{
     ErasValidatorPrefsStoreExt, ErasValidatorRewardStoreExt, HistoryDepthStoreExt, PayeeStoreExt,
     RewardDestination, RewardPoint, ValidatorsStoreExt,
   },
-  system::AccountStoreExt,
   Client, ClientBuilder, DefaultNodeRuntime, EventSubscription,
 };
 
@@ -283,7 +282,7 @@ impl Sync {
       validator_data.insert("name".to_string(), name.to_string());
 
       // Fetch own stake
-      let own_stake = self.get_balance(&stash).await?;
+      let own_stake = self.get_own_stake(&stash).await?;
       validator_data.insert("own_stake".to_string(), own_stake.to_string());
 
       // Cache information for the stash
@@ -305,6 +304,17 @@ impl Sync {
         .query_async(&mut conn as &mut Connection)
         .await
         .map_err(CacheError::RedisCMDError)?;
+
+      // Cache statistical boards
+      if own_stake != 0 {
+        let _: () = redis::cmd("ZADD")
+        .arg(Key::BoardAtEra(0, BOARD_OWN_STAKE_VALIDATORS.to_string()))
+        .arg(own_stake.to_string()) // score
+        .arg(stash.to_string()) // member
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+      }
 
       debug!("Successfully synced validator with stash {}", stash);
     }
@@ -360,18 +370,16 @@ impl Sync {
     Ok(display.to_string())
   }
 
-  async fn get_balance(&self, stash: &AccountId32) -> Result<u128, SyncError> {
+  async fn get_own_stake(&self, stash: &AccountId32) -> Result<u128, SyncError> {
     let client = self.node_client.clone();
-
-    let info = client.account(&stash, None).await?;
     let locks = client.locks(&stash, None).await?;
-    
-    // filter by bocks with id = "staking "
+    // Filter by locks with id = "staking "
     // [BalanceLock { id: "staking ", amount: 1000000000000, reasons: All }]
-    locks.into_iter().filter().map(|x| ).reduce()
-    println!("{:?} - {}", info, stash);
-    println!("{:?} - {}", locks, stash);
-    Ok(info.data.misc_frozen)
+    let amount: u128 = locks
+      .into_iter()
+      .filter(|x| x.id == *b"staking ")
+      .fold(0, |acc, x| acc + x.amount);
+    Ok(amount)
   }
 
   /// Calculate inclusion rate for the last depth history eras
@@ -457,7 +465,7 @@ impl Sync {
     let validators = match result {
       Some(v) => v,
       None => {
-        println!("No Validators available in the active era");
+        warn!("No Validators available in the active era");
         vec![]
       }
     };

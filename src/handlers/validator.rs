@@ -378,10 +378,6 @@ fn normalize_own_stake(own_stake: u128, min_own_stake: u128, max_own_stake: u128
     }
     let value =
         (own_stake as f64 - min_own_stake as f64) / (max_own_stake as f64 - min_own_stake as f64);
-    println!(
-        "normalize_own_stake__ {} {} {} {}",
-        own_stake, min_own_stake, max_own_stake, value
-    );
     value * 100.0
 }
 
@@ -463,9 +459,6 @@ async fn generate_board(
     let max_own_stake_limit =
         calculate_max_own_stake_limit(cache.clone(), sync::BOARD_OWN_STAKE_VALIDATORS).await?;
 
-    println!("min_own_stake_limit {}", min_own_stake_limit);
-    println!("max_own_stake_limit {}", max_own_stake_limit);
-    println!("weights[5] {}", weights[5]);
     let stashes: Vec<String> = redis::cmd("ZRANGE")
         .arg(sync::Key::BoardAtEra(
             era_index,
@@ -494,15 +487,6 @@ async fn generate_board(
             continue;
         }
 
-        println!("stash {}", stash);
-        println!(
-            "normalize_own_stake {}",
-            normalize_own_stake(
-                validator.own_stake,
-                min_own_stake_limit,
-                max_own_stake_limit,
-            )
-        );
         let score = normaliza_inclusion(validator.inclusion_rate) * weights[0] as f64
             + normaliza_commission(validator.commission) * weights[1] as f64
             + normalize_avg_reward_points(
@@ -517,8 +501,6 @@ async fn generate_board(
                 min_own_stake_limit,
                 max_own_stake_limit,
             ) * weights[5] as f64;
-
-        println!("score {}", score);
 
         let _: () = redis::cmd("ZADD")
             .arg(key.to_string())
