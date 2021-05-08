@@ -7,17 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- Generate boards from user defined weights
-- Change active and all validators set to sorted set
-- Add stakers clipped
-- Add number of stakers and clipped stakers
-- Rename mean by average or short avg
-- Name generic board names
-- Normalize average reward points based on historic era points
-- Add number of valid judgements
-- Add number of sub-accounts
-- Change Weights up to 8 characteristics
-
 ## [0.1.0] - 2021-04-19
 
 - First release
@@ -68,3 +57,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Fix inclusion calculation
+
+## [0.4.0] - 2021-05-08
+
+### Added
+
+- Generate boards from user defined weights
+- Add stakers clipped
+- Add number of stakers and clipped stakers
+- Add number of valid judgements
+- Add number of sub-accounts
+
+### Changed
+
+- Change active and all validators set to sorted set
+- Rename mean by average or short avg
+- Name generic board names
+- Normalize average reward points based on historic era points
+- Change Weights up to 8 characteristics
