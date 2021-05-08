@@ -43,7 +43,7 @@ use substrate_subxt::{
     ActiveEraStoreExt, BondedStoreExt, EraIndex, EraPayoutEvent, ErasRewardPointsStoreExt,
     ErasStakersClippedStoreExt, ErasStakersStoreExt, ErasTotalStakeStoreExt,
     ErasValidatorPrefsStoreExt, ErasValidatorRewardStoreExt, HistoryDepthStoreExt, PayeeStoreExt,
-    RewardDestination, RewardPoint, ValidatorsStoreExt,
+    RewardDestination, RewardPoint, ValidatorsStoreExt, LedgerStoreExt
   },
   Client, ClientBuilder, DefaultNodeRuntime, EventSubscription,
 };
@@ -284,7 +284,7 @@ impl Sync {
       validator_data.append(&mut identity_data);
 
       // Fetch own stake
-      let own_stake = self.get_own_stake(&stash).await?;
+      let own_stake = self.get_own_stake(&controller).await?;
       validator_data.insert("own_stake".to_string(), own_stake.to_string());
 
       // Cache information for the stash
@@ -413,15 +413,13 @@ impl Sync {
     Ok(identity_data)
   }
 
-  async fn get_own_stake(&self, stash: &AccountId32) -> Result<u128, SyncError> {
+  async fn get_own_stake(&self, controller: &AccountId32) -> Result<u128, SyncError> {
     let client = self.node_client.clone();
-    let locks = client.locks(&stash, None).await?;
-    // Filter by locks with id = "staking "
-    // [BalanceLock { id: "staking ", amount: 1000000000000, reasons: All }]
-    let amount: u128 = locks
-      .into_iter()
-      .filter(|x| x.id == *b"staking ")
-      .fold(0, |acc, x| acc + x.amount);
+    let amount = if let Some(ledger) = client.ledger(controller.clone(), None).await? {
+      ledger.active
+    } else {
+      0
+    };
     Ok(amount)
   }
 
