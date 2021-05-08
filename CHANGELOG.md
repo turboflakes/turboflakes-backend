@@ -75,3 +75,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Name generic board names
 - Normalize average reward points based on historic era points
 - Change Weights up to 8 characteristics
+
+## [0.4.1] - 2021-05-08
+
+### Changed
+
+- Fix dependencies
