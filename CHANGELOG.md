@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rename mean by average or short avg
 - Name generic board names
 - Normalize average reward points based on historic era points
+- Add number of valid judgements
+- Add number of sub-accounts
+- Change Weights up to 8 characteristics
 
 ## [0.1.0] - 2021-04-19
 

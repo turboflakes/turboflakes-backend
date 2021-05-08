@@ -44,6 +44,8 @@ pub struct Validator {
     pub blocked: bool,
     pub active: bool,
     pub reward_staked: bool,
+    pub judgements: u32,
+    pub sub_accounts: u32,
 }
 
 impl From<ValidatorCache> for Validator {
@@ -90,6 +92,16 @@ impl From<ValidatorCache> for Validator {
                 .get("reward_staked")
                 .unwrap_or(&zero)
                 .parse::<bool>()
+                .unwrap_or_default(),
+            judgements: data
+                .get("judgements")
+                .unwrap_or(&zero)
+                .parse::<u32>()
+                .unwrap_or_default(),
+            sub_accounts: data
+                .get("sub_accounts")
+                .unwrap_or(&zero)
+                .parse::<u32>()
                 .unwrap_or_default(),
         }
     }
@@ -288,10 +300,12 @@ type Weight = u32;
 /// Position 3 - If reward is staked is preferrable
 /// Position 4 - If in active set is preferrable
 /// Position 5 - Higher own stake is preferrable
+/// Position 6 - Higher number of Reasonable or KnownGood judgements is preferrable
+/// Position 7 - Lower number of sub-accounts is preferrable
 type Weights = Vec<Weight>;
 
 /// Current weighs capacity
-const WEIGHTS_CAPACITY: usize = 6;
+const WEIGHTS_CAPACITY: usize = 8;
 
 // Number of elements to return
 type Quantity = u32;
@@ -348,9 +362,9 @@ fn normaliza_inclusion(inclusion_rate: f32) -> f64 {
     (inclusion_rate * 100.0) as f64
 }
 
-/// Normalize commission between 0 - 100
+/// Reverse Normalize commission between 0 - 100
 /// lower commission the better
-fn normaliza_commission(commission: u32) -> f64 {
+fn reverse_normalize_commission(commission: u32) -> f64 {
     100.0 - (commission / 10000000) as f64
 }
 
@@ -359,26 +373,17 @@ fn normalize_flag(flag: bool) -> f64 {
     (flag as u32 * 100) as f64
 }
 
-/// Normalize average reward points between 0 - 1000
-fn normalize_avg_reward_points(
-    avg_reward_points: f64,
-    min_points_limit: f64,
-    max_points_limit: f64,
-) -> f64 {
-    if avg_reward_points == 0.0 {
+/// Normalize value between 0 - 100
+fn normalize_value(value: f64, min: f64, max: f64) -> f64 {
+    if value == 0.0 {
         return 0.0;
     }
-    100.0 * ((avg_reward_points - min_points_limit) / (max_points_limit - min_points_limit))
+    100.0 * ((value - min) / (max - min))
 }
 
-/// Normalize own stake points between 0 - 1000
-fn normalize_own_stake(own_stake: u128, min_own_stake: u128, max_own_stake: u128) -> f64 {
-    if own_stake == 0 {
-        return 0.0;
-    }
-    let value =
-        (own_stake as f64 - min_own_stake as f64) / (max_own_stake as f64 - min_own_stake as f64);
-    value * 100.0
+/// Reverse normalization
+fn reverse_normalize_value(value: f64, min: f64, max: f64) -> f64 {
+    100.0 - normalize_value(value, min, max)
 }
 
 async fn calculate_avg_points(cache: Data<RedisPool>, name: &str) -> Result<f64, ApiError> {
@@ -398,12 +403,9 @@ async fn calculate_avg_points(cache: Data<RedisPool>, name: &str) -> Result<f64,
     Ok(avg)
 }
 
-async fn calculate_min_own_stake_limit(
-    cache: Data<RedisPool>,
-    name: &str,
-) -> Result<u128, ApiError> {
+async fn calculate_min_limit(cache: Data<RedisPool>, name: &str) -> Result<f64, ApiError> {
     let mut conn = get_conn(&cache).await?;
-    let v: Vec<(String, u128)> = redis::cmd("ZRANGE")
+    let v: Vec<(String, f64)> = redis::cmd("ZRANGE")
         .arg(sync::Key::BoardAtEra(0, name.to_string()))
         .arg("-inf")
         .arg("+inf")
@@ -416,17 +418,14 @@ async fn calculate_min_own_stake_limit(
         .await
         .map_err(CacheError::RedisCMDError)?;
     if v.len() == 0 {
-        return Ok(0);
+        return Ok(0.0);
     }
     Ok(v[0].1)
 }
 
-async fn calculate_max_own_stake_limit(
-    cache: Data<RedisPool>,
-    name: &str,
-) -> Result<u128, ApiError> {
+async fn calculate_max_limit(cache: Data<RedisPool>, name: &str) -> Result<f64, ApiError> {
     let mut conn = get_conn(&cache).await?;
-    let v: Vec<(String, u128)> = redis::cmd("ZRANGE")
+    let v: Vec<(String, f64)> = redis::cmd("ZRANGE")
         .arg(sync::Key::BoardAtEra(0, name.to_string()))
         .arg("+inf")
         .arg("-inf")
@@ -440,7 +439,7 @@ async fn calculate_max_own_stake_limit(
         .await
         .map_err(CacheError::RedisCMDError)?;
     if v.len() == 0 {
-        return Ok(0);
+        return Ok(0.0);
     }
     Ok(v[0].1)
 }
@@ -455,9 +454,17 @@ async fn generate_board(
     let max_points_limit = calculate_avg_points(cache.clone(), sync::BOARD_MAX_POINTS_ERAS).await?;
     let min_points_limit = calculate_avg_points(cache.clone(), sync::BOARD_MIN_POINTS_ERAS).await?;
     let min_own_stake_limit =
-        calculate_min_own_stake_limit(cache.clone(), sync::BOARD_OWN_STAKE_VALIDATORS).await?;
+        calculate_min_limit(cache.clone(), sync::BOARD_OWN_STAKE_VALIDATORS).await?;
     let max_own_stake_limit =
-        calculate_max_own_stake_limit(cache.clone(), sync::BOARD_OWN_STAKE_VALIDATORS).await?;
+        calculate_max_limit(cache.clone(), sync::BOARD_OWN_STAKE_VALIDATORS).await?;
+    let min_judgements_limit =
+        calculate_min_limit(cache.clone(), sync::BOARD_JUDGEMENTS_VALIDATORS).await?;
+    let max_judgements_limit =
+        calculate_max_limit(cache.clone(), sync::BOARD_JUDGEMENTS_VALIDATORS).await?;
+    let min_sub_accounts_limit =
+        calculate_min_limit(cache.clone(), sync::BOARD_SUB_ACCOUNTS_VALIDATORS).await?;
+    let max_sub_accounts_limit =
+        calculate_max_limit(cache.clone(), sync::BOARD_SUB_ACCOUNTS_VALIDATORS).await?;
 
     let stashes: Vec<String> = redis::cmd("ZRANGE")
         .arg(sync::Key::BoardAtEra(
@@ -488,19 +495,29 @@ async fn generate_board(
         }
 
         let score = normaliza_inclusion(validator.inclusion_rate) * weights[0] as f64
-            + normaliza_commission(validator.commission) * weights[1] as f64
-            + normalize_avg_reward_points(
+            + reverse_normalize_commission(validator.commission) * weights[1] as f64
+            + normalize_value(
                 validator.avg_reward_points,
                 min_points_limit,
-                max_points_limit,
+                max_points_limit
             ) * weights[2] as f64
             + normalize_flag(validator.reward_staked) * weights[3] as f64
             + normalize_flag(validator.active) * weights[4] as f64
-            + normalize_own_stake(
-                validator.own_stake,
+            + normalize_value(
+                validator.own_stake as f64,
                 min_own_stake_limit,
-                max_own_stake_limit,
-            ) * weights[5] as f64;
+                max_own_stake_limit
+            ) * weights[5] as f64
+            + normalize_value(
+                validator.judgements as f64,
+                min_judgements_limit,
+                max_judgements_limit
+            ) * weights[6] as f64
+            + reverse_normalize_value(
+                validator.sub_accounts as f64,
+                min_sub_accounts_limit,
+                max_sub_accounts_limit
+            ) * weights[7] as f64;
 
         let _: () = redis::cmd("ZADD")
             .arg(key.to_string())

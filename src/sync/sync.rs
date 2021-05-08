@@ -34,7 +34,7 @@ use std::{collections::BTreeMap, convert::TryInto, marker::PhantomData, result::
 use std::{thread, time};
 use substrate_subxt::{
   balances::LocksStoreExt,
-  identity::{IdentityOfStoreExt, Judgement, SuperOfStoreExt},
+  identity::{IdentityOfStoreExt, Judgement, SubsOfStoreExt, SuperOfStoreExt},
   session::ValidatorsStore,
   sp_core::storage::StorageKey,
   sp_core::Decode,
@@ -54,6 +54,8 @@ pub const BOARD_TOTAL_POINTS_ERAS: &str = "total:points:era";
 pub const BOARD_MAX_POINTS_ERAS: &str = "max:points:era";
 pub const BOARD_MIN_POINTS_ERAS: &str = "min:points:era";
 pub const BOARD_OWN_STAKE_VALIDATORS: &str = "own:stake:val";
+pub const BOARD_JUDGEMENTS_VALIDATORS: &str = "judgements:val";
+pub const BOARD_SUB_ACCOUNTS_VALIDATORS: &str = "sub:accounts:val";
 
 pub async fn create_substrate_node_client(
   config: Config,
@@ -278,8 +280,8 @@ impl Sync {
       );
 
       // Fetch identity
-      let name = self.get_identity(&stash, None).await?;
-      validator_data.insert("name".to_string(), name.to_string());
+      let mut identity_data = self.get_identity(&stash, None).await?;
+      validator_data.append(&mut identity_data);
 
       // Fetch own stake
       let own_stake = self.get_own_stake(&stash).await?;
@@ -315,6 +317,38 @@ impl Sync {
           .await
           .map_err(CacheError::RedisCMDError)?;
       }
+      let _: () = redis::cmd("ZADD")
+        .arg(Key::BoardAtEra(0, BOARD_JUDGEMENTS_VALIDATORS.to_string()))
+        .arg(
+          validator_data
+            .get("judgements")
+            .unwrap_or(&"0".to_string())
+            .parse::<u32>()
+            .ok()
+            .unwrap_or_default(),
+        ) // score
+        .arg(stash.to_string()) // member
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+      let _: () = redis::cmd("ZADD")
+        .arg(Key::BoardAtEra(
+          0,
+          BOARD_SUB_ACCOUNTS_VALIDATORS.to_string(),
+        ))
+        .arg(
+          validator_data
+            .get("sub_accounts")
+            .unwrap_or(&"0".to_string())
+            .parse::<u32>()
+            .ok()
+            .unwrap_or_default(),
+        ) // score
+        .arg(stash.to_string()) // member
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
 
       debug!("Successfully synced validator with stash {}", stash);
     }
@@ -332,20 +366,35 @@ impl Sync {
     &self,
     stash: &AccountId32,
     sub_account_name: Option<String>,
-  ) -> Result<String, SyncError> {
+  ) -> Result<BTreeMap<String, String>, SyncError> {
     let client = self.node_client.clone();
-
+    let mut identity_data: BTreeMap<String, String> = BTreeMap::new();
     let re = Regex::new(r"[^\x20-\x7E]").unwrap();
-    let display: String = match client.identity_of(stash.clone(), None).await? {
+    match client.identity_of(stash.clone(), None).await? {
       Some(registration) => {
         let mut parent =
           String::from_utf8(registration.info.display.encode()).unwrap_or("-".to_string());
         parent = re.replace_all(&parent, "").trim().to_string();
-        if let Some(n) = sub_account_name {
+        // Name
+        let name = if let Some(n) = sub_account_name {
           format!("{}/{}", parent, n)
         } else {
           parent
-        }
+        };
+        identity_data.insert("name".to_string(), name);
+        // Judgements: [(0, Judgement::Reasonable)]
+        let judgements = registration
+          .judgements
+          .into_iter()
+          .fold(0, |acc, x| match x.1 {
+            Judgement::Reasonable => acc + 1,
+            Judgement::KnownGood => acc + 1,
+            _ => acc,
+          });
+        identity_data.insert("judgements".to_string(), judgements.to_string());
+        // Identity Sub-Accounts
+        let (_, subs) = client.subs_of(stash.clone(), None).await?;
+        identity_data.insert("sub_accounts".to_string(), subs.len().to_string());
       }
       None => {
         if let Some((parent_account, data)) = client.super_of(stash.clone(), None).await? {
@@ -355,11 +404,13 @@ impl Sync {
             .get_identity(&parent_account, Some(sub_account_name))
             .await;
         } else {
-          "".to_string()
+          identity_data.insert("name".to_string(), "".to_string());
+          identity_data.insert("judgements".to_string(), "0".to_string());
+          identity_data.insert("sub_accounts".to_string(), "0".to_string());
         }
       }
     };
-    Ok(display.to_string())
+    Ok(identity_data)
   }
 
   async fn get_own_stake(&self, stash: &AccountId32) -> Result<u128, SyncError> {
