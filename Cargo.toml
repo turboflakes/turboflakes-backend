@@ -14,6 +14,8 @@ env_logger = "0.6"
 lazy_static = "1.4"
 derive_more = "0.99"
 async-std = "1.9.0"
+async-trait = "^0.1.49"
+async-recursion = "0.3.2"
 actix-web = "3"
 actix-cors = "0.5.4"
 redis = { version = "0.19.0", features = ["async-std-comp"] }
@@ -21,9 +23,7 @@ mobc = { version = "0.7", default-features = false, features = ["async-std"] }
 mobc-redis = { version = "0.7", default-features = false, features = ["async-std-comp"] }
 serde = "1"
 thiserror = "1.0.24"
-async-trait = "^0.1.49"
 substrate-subxt = { git = "https://github.com/turboflakes/substrate-subxt", branch = "develop" }
 chrono = "0.4.19"
-async-recursion = "0.4.0"
 codec = { package = "parity-scale-codec", version = "2.0.1", default-features = false, features = ["derive", "full"] }
 regex = "1.4.6"
