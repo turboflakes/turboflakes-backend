@@ -39,6 +39,7 @@ pub struct Validator {
     pub name: String,
     pub own_stake: u128,
     pub nominators: u32,
+    pub nominators_stake: u128,
     pub inclusion_rate: f32,
     pub avg_reward_points: f64,
     pub commission: u32,
@@ -68,6 +69,11 @@ impl From<ValidatorCache> for Validator {
                 .get("nominators")
                 .unwrap_or(&zero)
                 .parse::<u32>()
+                .unwrap_or_default(),
+            nominators_stake: data
+                .get("nominators_stake")
+                .unwrap_or(&zero)
+                .parse::<u128>()
                 .unwrap_or_default(),
             inclusion_rate: data
                 .get("inclusion_rate")

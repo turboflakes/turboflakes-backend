@@ -236,7 +236,7 @@ impl Sync {
     let history_depth: u32 = client.history_depth(None).await?;
     let active_era = client.active_era(None).await?;
     let mut validators = client.validators_iter(None).await?;
-    let mut i = 0;
+    let mut i: u32 = 0;
     while let Some((key, validator_prefs)) = validators.next().await? {
       let mut validator_data: BTreeMap<String, String> = BTreeMap::new();
       validator_data.insert(
@@ -246,18 +246,6 @@ impl Sync {
       validator_data.insert("blocked".to_string(), validator_prefs.blocked.to_string());
 
       let stash = get_account_id_from_storage_key(key);
-
-      // Sync controller
-      let controller = match client.bonded(stash.clone(), None).await? {
-        Some(c) => c,
-        None => {
-          return Err(SyncError::Other(format!(
-            "Controller account not found for stash {:?}",
-            stash
-          )))
-        }
-      };
-      validator_data.insert("controller".to_string(), controller.to_string());
 
       // Sync payee - where the reward payment should be made
       let reward_staked = if RewardDestination::Staked == client.payee(stash.clone(), None).await? {
@@ -286,12 +274,25 @@ impl Sync {
       let mut identity_data = self.get_identity(&stash, None).await?;
       validator_data.append(&mut identity_data);
 
-      // Fetch own stake
-      let own_stake = self.get_own_stake(&controller).await?;
-      validator_data.insert("own_stake".to_string(), own_stake.to_string());
-
-      // Reset nominators counter
+      // Sync controller
+      if let Some(controller) = client.bonded(stash.clone(), None).await? {
+        validator_data.insert("controller".to_string(), controller.to_string());
+        // Fetch own stake
+        let own_stake = self.get_controller_stake(&controller).await?;
+        validator_data.insert("own_stake".to_string(), own_stake.to_string());
+        if own_stake != 0 {
+          let _: () = redis::cmd("ZADD")
+            .arg(Key::BoardAtEra(0, BOARD_OWN_STAKE_VALIDATORS.to_string()))
+            .arg(own_stake.to_string()) // score
+            .arg(stash.to_string()) // member
+            .query_async(&mut conn as &mut Connection)
+            .await
+            .map_err(CacheError::RedisCMDError)?;
+        }
+      }
+      // NOTE: Reset nominators counters
       validator_data.insert("nominators".to_string(), "0".to_string());
+      validator_data.insert("nominators_stake".to_string(), "0".to_string());
 
       // Cache information for the stash
       let _: () = redis::cmd("HSET")
@@ -314,15 +315,6 @@ impl Sync {
         .map_err(CacheError::RedisCMDError)?;
 
       // Cache statistical boards
-      if own_stake != 0 {
-        let _: () = redis::cmd("ZADD")
-          .arg(Key::BoardAtEra(0, BOARD_OWN_STAKE_VALIDATORS.to_string()))
-          .arg(own_stake.to_string()) // score
-          .arg(stash.to_string()) // member
-          .query_async(&mut conn as &mut Connection)
-          .await
-          .map_err(CacheError::RedisCMDError)?;
-      }
       let _: () = redis::cmd("ZADD")
         .arg(Key::BoardAtEra(0, BOARD_JUDGEMENTS_VALIDATORS.to_string()))
         .arg(
@@ -380,18 +372,40 @@ impl Sync {
     info!("Starting nominators sync");
     let mut nominators = client.nominators_iter(None).await?;
     let mut i = 0;
-    while let Some((_key, nominations)) = nominators.next().await? {
-      for stash in nominations.targets.iter() {
-        // Cache information for the stash
-        let _: () = redis::cmd("HINCRBY")
-          .arg(Key::Validator(stash.clone()))
-          .arg("nominators")
-          .arg(1)
-          .query_async(&mut conn as &mut Connection)
-          .await
-          .map_err(CacheError::RedisCMDError)?;
+    while let Some((key, nominations)) = nominators.next().await? {
+      let stash = get_account_id_from_storage_key(key);
+      if let Some(controller) = client.bonded(stash.clone(), None).await? {
+        let nominator_stake = self.get_controller_stake(&controller).await?;
+        for validator_stash in nominations.targets.iter() {
+          let _: () = redis::cmd("HINCRBY")
+            .arg(Key::Validator(validator_stash.clone()))
+            .arg("nominators")
+            .arg(1)
+            .query_async(&mut conn as &mut Connection)
+            .await
+            .map_err(CacheError::RedisCMDError)?;
+
+          // Since the range of values supported by HINCRBY is limited to 64 bit signed integers.
+          // Store value as string and make calculation here
+          let mut s: u128 = redis::cmd("HGET")
+            .arg(Key::Validator(validator_stash.clone()))
+            .arg("nominators_stake")
+            .query_async(&mut conn as &mut Connection)
+            .await
+            .map_err(CacheError::RedisCMDError)?;
+
+          s += nominator_stake;
+          let _: () = redis::cmd("HSET")
+            .arg(Key::Validator(validator_stash.clone()))
+            .arg("nominators_stake")
+            .arg(s.to_string())
+            .query_async(&mut conn as &mut Connection)
+            .await
+            .map_err(CacheError::RedisCMDError)?;
+        }
       }
       i += 1;
+      debug!("Successfully synced nominator with stash {}", stash);
     }
     info!("Successfully synced {} nominators", i);
     Ok(())
@@ -449,7 +463,7 @@ impl Sync {
     Ok(identity_data)
   }
 
-  async fn get_own_stake(&self, controller: &AccountId32) -> Result<u128, SyncError> {
+  async fn get_controller_stake(&self, controller: &AccountId32) -> Result<u128, SyncError> {
     let client = self.node_client.clone();
     let amount = if let Some(ledger) = client.ledger(controller.clone(), None).await? {
       ledger.active
