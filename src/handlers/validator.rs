@@ -38,6 +38,7 @@ pub struct Validator {
     pub controller: String,
     pub name: String,
     pub own_stake: u128,
+    pub nominators: u32,
     pub inclusion_rate: f32,
     pub avg_reward_points: f64,
     pub commission: u32,
@@ -62,6 +63,11 @@ impl From<ValidatorCache> for Validator {
                 .get("own_stake")
                 .unwrap_or(&zero)
                 .parse::<u128>()
+                .unwrap_or_default(),
+            nominators: data
+                .get("nominators")
+                .unwrap_or(&zero)
+                .parse::<u32>()
                 .unwrap_or_default(),
             inclusion_rate: data
                 .get("inclusion_rate")
@@ -499,24 +505,24 @@ async fn generate_board(
             + normalize_value(
                 validator.avg_reward_points,
                 min_points_limit,
-                max_points_limit
+                max_points_limit,
             ) * weights[2] as f64
             + normalize_flag(validator.reward_staked) * weights[3] as f64
             + normalize_flag(validator.active) * weights[4] as f64
             + normalize_value(
                 validator.own_stake as f64,
                 min_own_stake_limit,
-                max_own_stake_limit
+                max_own_stake_limit,
             ) * weights[5] as f64
             + normalize_value(
                 validator.judgements as f64,
                 min_judgements_limit,
-                max_judgements_limit
+                max_judgements_limit,
             ) * weights[6] as f64
             + reverse_normalize_value(
                 validator.sub_accounts as f64,
                 min_sub_accounts_limit,
-                max_sub_accounts_limit
+                max_sub_accounts_limit,
             ) * weights[7] as f64;
 
         let _: () = redis::cmd("ZADD")

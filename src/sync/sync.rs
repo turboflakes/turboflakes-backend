@@ -33,7 +33,6 @@ use regex::Regex;
 use std::{collections::BTreeMap, convert::TryInto, marker::PhantomData, result::Result};
 use std::{thread, time};
 use substrate_subxt::{
-  balances::LocksStoreExt,
   identity::{IdentityOfStoreExt, Judgement, SubsOfStoreExt, SuperOfStoreExt},
   session::ValidatorsStore,
   sp_core::storage::StorageKey,
@@ -42,8 +41,8 @@ use substrate_subxt::{
   staking::{
     ActiveEraStoreExt, BondedStoreExt, EraIndex, EraPayoutEvent, ErasRewardPointsStoreExt,
     ErasStakersClippedStoreExt, ErasStakersStoreExt, ErasTotalStakeStoreExt,
-    ErasValidatorPrefsStoreExt, ErasValidatorRewardStoreExt, HistoryDepthStoreExt, PayeeStoreExt,
-    RewardDestination, RewardPoint, ValidatorsStoreExt, LedgerStoreExt
+    ErasValidatorPrefsStoreExt, ErasValidatorRewardStoreExt, HistoryDepthStoreExt, LedgerStoreExt,
+    NominatorsStoreExt, PayeeStoreExt, RewardDestination, RewardPoint, ValidatorsStoreExt,
   },
   Client, ClientBuilder, DefaultNodeRuntime, EventSubscription,
 };
@@ -161,6 +160,8 @@ impl Sync {
 
     self.validators().await?;
 
+    self.nominators().await?;
+
     self.active_validators().await?;
 
     Ok(())
@@ -231,9 +232,11 @@ impl Sync {
       .map_err(CacheError::RedisPoolError)?;
     let client = self.node_client.clone();
 
+    info!("Starting validators sync");
     let history_depth: u32 = client.history_depth(None).await?;
     let active_era = client.active_era(None).await?;
     let mut validators = client.validators_iter(None).await?;
+    let mut i = 0;
     while let Some((key, validator_prefs)) = validators.next().await? {
       let mut validator_data: BTreeMap<String, String> = BTreeMap::new();
       validator_data.insert(
@@ -286,6 +289,9 @@ impl Sync {
       // Fetch own stake
       let own_stake = self.get_own_stake(&controller).await?;
       validator_data.insert("own_stake".to_string(), own_stake.to_string());
+
+      // Reset nominators counter
+      validator_data.insert("nominators".to_string(), "0".to_string());
 
       // Cache information for the stash
       let _: () = redis::cmd("HSET")
@@ -351,13 +357,43 @@ impl Sync {
         .map_err(CacheError::RedisCMDError)?;
 
       debug!("Successfully synced validator with stash {}", stash);
+      i += 1;
     }
 
     info!(
-      "Successfully synced all validators in era {}",
-      active_era.index
+      "Successfully synced {} validators in era {}",
+      i, active_era.index
     );
 
+    Ok(())
+  }
+
+  /// Sync all nominators currently available
+  async fn nominators(&self) -> Result<(), SyncError> {
+    let mut conn = self
+      .cache_pool
+      .get()
+      .await
+      .map_err(CacheError::RedisPoolError)?;
+    let client = self.node_client.clone();
+
+    info!("Starting nominators sync");
+    let mut nominators = client.nominators_iter(None).await?;
+    let mut i = 0;
+    while let Some((_key, nominations)) = nominators.next().await? {
+      for stash in nominations.targets.iter() {
+        // Cache information for the stash
+        let _: () = redis::cmd("HINCRBY")
+          .arg(Key::Validator(stash.clone()))
+          .arg("nominators")
+          .arg(1)
+          .query_async(&mut conn as &mut Connection)
+          .await
+          .map_err(CacheError::RedisCMDError)?;
+      }
+      i += 1;
+    }
+    info!("Successfully synced {} nominators", i);
     Ok(())
   }
 
