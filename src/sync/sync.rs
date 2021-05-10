@@ -154,11 +154,11 @@ impl Sync {
   async fn history(&self) -> Result<(), SyncError> {
     self.ready_or_await().await;
 
-    let active_era = self.active_era().await?;
+    // let active_era = self.active_era().await?;
 
-    self.eras_history_depth(active_era).await?;
+    // self.eras_history_depth(active_era).await?;
 
-    self.validators().await?;
+    // self.validators().await?;
 
     self.nominators().await?;
 
@@ -271,6 +271,7 @@ impl Sync {
       // Sync controller
       if let Some(controller) = client.bonded(stash.clone(), None).await? {
         let mut validator_data: BTreeMap<String, String> = BTreeMap::new();
+        validator_data.insert("active".to_string(), "false".to_string());
         validator_data.insert(
           "commission".to_string(),
           validator_prefs.commission.deconstruct().to_string(),
@@ -413,6 +414,10 @@ impl Sync {
             .map_err(CacheError::RedisCMDError)?;
 
           if !exists {
+            warn!(
+              "Skipping validator with stash {} -> no longer available",
+              validator_stash
+            );
             continue;
           }
           let _: () = redis::cmd("HINCRBY")
@@ -425,18 +430,21 @@ impl Sync {
 
           // Since the range of values supported by HINCRBY is limited to 64 bit signed integers.
           // Store value as string and make calculation here
-          let mut s: u128 = redis::cmd("HGET")
+          let res: Option<String> = redis::cmd("HGET")
             .arg(Key::Validator(validator_stash.clone()))
             .arg("nominators_stake")
             .query_async(&mut conn as &mut Connection)
             .await
             .map_err(CacheError::RedisCMDError)?;
-
-          s += nominator_stake;
+          let mut value = match res {
+            Some(value) => value.parse::<u128>().unwrap_or_default(),
+            None => 0,
+          };
+          value += nominator_stake;
           let _: () = redis::cmd("HSET")
             .arg(Key::Validator(validator_stash.clone()))
             .arg("nominators_stake")
-            .arg(s.to_string())
+            .arg(value.to_string())
             .query_async(&mut conn as &mut Connection)
             .await
             .map_err(CacheError::RedisCMDError)?;
