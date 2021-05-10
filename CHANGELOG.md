@@ -100,3 +100,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Only sync validators with bonded controller
+
+## [0.4.5] - 2021-05-11
+
+### Changed
+
+- Fix cache empty value result
