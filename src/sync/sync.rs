@@ -34,7 +34,7 @@ use std::{collections::BTreeMap, convert::TryInto, marker::PhantomData, result::
 use std::{thread, time};
 use substrate_subxt::{
   identity::{IdentityOfStoreExt, Judgement, SubsOfStoreExt, SuperOfStoreExt},
-  session::ValidatorsStore,
+  session::{NewSessionEvent, ValidatorsStore},
   sp_core::storage::StorageKey,
   sp_core::Decode,
   sp_runtime::AccountId32,
@@ -47,14 +47,14 @@ use substrate_subxt::{
   Client, ClientBuilder, DefaultNodeRuntime, EventSubscription,
 };
 
-pub const BOARD_ACTIVE_VALIDATORS: &str = "active:val";
-pub const BOARD_ALL_VALIDATORS: &str = "all:val";
-pub const BOARD_TOTAL_POINTS_ERAS: &str = "total:points:era";
-pub const BOARD_MAX_POINTS_ERAS: &str = "max:points:era";
-pub const BOARD_MIN_POINTS_ERAS: &str = "min:points:era";
-pub const BOARD_OWN_STAKE_VALIDATORS: &str = "own:stake:val";
-pub const BOARD_JUDGEMENTS_VALIDATORS: &str = "judgements:val";
-pub const BOARD_SUB_ACCOUNTS_VALIDATORS: &str = "sub:accounts:val";
+pub const BOARD_ACTIVE_VALIDATORS: &'static str = "active:val";
+pub const BOARD_ALL_VALIDATORS: &'static str = "all:val";
+pub const BOARD_TOTAL_POINTS_ERAS: &'static str = "total:points:era";
+pub const BOARD_MAX_POINTS_ERAS: &'static str = "max:points:era";
+pub const BOARD_MIN_POINTS_ERAS: &'static str = "min:points:era";
+pub const BOARD_OWN_STAKE_VALIDATORS: &'static str = "own:stake:val";
+pub const BOARD_JUDGEMENTS_VALIDATORS: &'static str = "judgements:val";
+pub const BOARD_SUB_ACCOUNTS_VALIDATORS: &'static str = "sub:accounts:val";
 
 pub async fn create_substrate_node_client(
   config: Config,
@@ -167,15 +167,17 @@ impl Sync {
     Ok(())
   }
 
-  async fn subscribe(&self) -> Result<(), SyncError> {
-    info!("Starting subscription");
+  /// Sync previous era history every era payout
+  async fn subscribe_era_payout_events(&self) -> Result<(), SyncError> {
+    info!("Starting era payout subscription");
     self.ready_or_await().await;
     let client = self.node_client.clone();
     let sub = client.subscribe_finalized_events().await?;
     let decoder = client.events_decoder();
     let mut sub = EventSubscription::<DefaultNodeRuntime>::new(sub, decoder);
     sub.filter_event::<EraPayoutEvent<_>>();
-    info!("Waiting for EraPayoutEvent");
+    
+    info!("Waiting for EraPayout events");
     while let Some(result) = sub.next().await {
       if let Ok(raw_event) = result {
         match EraPayoutEvent::<DefaultNodeRuntime>::decode(&mut &raw_event.data[..]) {
@@ -183,8 +185,36 @@ impl Sync {
             info!("Successfully decoded event {:?}", event);
             self.active_era().await?;
             self.eras_history(event.era_index, Some(true)).await?;
-            self.validators().await?;
             self.active_validators().await?;
+          }
+          Err(e) => {
+            error!("Decoding event error: {:?}", e);
+          }
+        }
+      }
+    }
+    // If subscription has closed for some reason await and subscribe again
+    Err(SyncError::SubscriptionFinished)
+  }
+
+  /// Sync all validators and nominators every session
+  async fn subscribe_new_session_events(&self) -> Result<(), SyncError> {
+    info!("Starting new session subscription");
+    self.ready_or_await().await;
+    let client = self.node_client.clone();
+    let sub = client.subscribe_finalized_events().await?;
+    let decoder = client.events_decoder();
+    let mut sub = EventSubscription::<DefaultNodeRuntime>::new(sub, decoder);
+    sub.filter_event::<NewSessionEvent<_>>();
+    
+    info!("Waiting for NewSession events");
+    while let Some(result) = sub.next().await {
+      if let Ok(raw_event) = result {
+        match EraPayoutEvent::<DefaultNodeRuntime>::decode(&mut &raw_event.data[..]) {
+          Ok(event) => {
+            info!("Successfully decoded event {:?}", event);
+            self.validators().await?;
+            self.nominators().await?;
           }
           Err(e) => {
             error!("Decoding event error: {:?}", e);
@@ -199,7 +229,8 @@ impl Sync {
   /// Spawn history and subscription sincronization tasks
   pub fn run() {
     spawn_and_restart_history_on_error();
-    spawn_and_restart_subscription_on_error();
+    spawn_and_restart_era_payout_subscription_on_error();
+    spawn_and_restart_new_session_subscription_on_error();
   }
 
   /// Sync active era
@@ -885,11 +916,23 @@ impl Sync {
   }
 }
 
-pub fn spawn_and_restart_subscription_on_error() {
+pub fn spawn_and_restart_era_payout_subscription_on_error() {
   task::spawn(async {
     loop {
       let sync: Sync = Sync::new().await;
-      if let Err(e) = sync.subscribe().await {
+      if let Err(e) = sync.subscribe_era_payout_events().await {
+        error!("{}", e);
+        thread::sleep(time::Duration::from_millis(500));
+      };
+    }
+  });
+}
+
+pub fn spawn_and_restart_new_session_subscription_on_error() {
+  task::spawn(async {
+    loop {
+      let sync: Sync = Sync::new().await;
+      if let Err(e) = sync.subscribe_new_session_events().await {
         error!("{}", e);
         thread::sleep(time::Duration::from_millis(500));
       };

@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 - Sync all nominators and respective stake for all validators
+- Subscribe new session events to sync validators and nominators
 
 ## [0.1.0] - 2021-04-19
 

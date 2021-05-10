@@ -104,6 +104,7 @@ impl From<CacheError> for ApiError {
 
 /// Syncronization specific error messages
 #[derive(Error, Debug)]
+#[allow(dead_code)]
 pub enum SyncError {
     #[error("Cache error: {0}")]
     CacheError(#[from] CacheError),
