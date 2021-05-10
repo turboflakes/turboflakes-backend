@@ -106,3 +106,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Fix cache empty value result
+
+## [0.4.6] - 2021-05-11
+
+### Changed
+
+- Fix uncomment history code :)

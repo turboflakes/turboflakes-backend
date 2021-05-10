@@ -154,11 +154,11 @@ impl Sync {
   async fn history(&self) -> Result<(), SyncError> {
     self.ready_or_await().await;
 
-    // let active_era = self.active_era().await?;
+    let active_era = self.active_era().await?;
 
-    // self.eras_history_depth(active_era).await?;
+    self.eras_history_depth(active_era).await?;
 
-    // self.validators().await?;
+    self.validators().await?;
 
     self.nominators().await?;
 
