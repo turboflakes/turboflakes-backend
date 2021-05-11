@@ -44,7 +44,6 @@ use substrate_subxt::{
     ErasValidatorPrefsStoreExt, ErasValidatorRewardStoreExt, HistoryDepthStoreExt, LedgerStoreExt,
     NominatorsStoreExt, PayeeStoreExt, RewardDestination, RewardPoint, ValidatorsStoreExt,
   },
-  system::ExtrinsicSuccessEvent,
   Client, ClientBuilder, DefaultNodeRuntime, EventSubscription,
 };
 
