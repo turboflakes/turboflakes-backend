@@ -44,6 +44,7 @@ use substrate_subxt::{
     ErasValidatorPrefsStoreExt, ErasValidatorRewardStoreExt, HistoryDepthStoreExt, LedgerStoreExt,
     NominatorsStoreExt, PayeeStoreExt, RewardDestination, RewardPoint, ValidatorsStoreExt,
   },
+  system::ExtrinsicSuccessEvent,
   Client, ClientBuilder, DefaultNodeRuntime, EventSubscription,
 };
 
@@ -208,7 +209,7 @@ impl Sync {
     info!("Waiting for NewSession events");
     while let Some(result) = sub.next().await {
       if let Ok(raw_event) = result {
-        match EraPayoutEvent::<DefaultNodeRuntime>::decode(&mut &raw_event.data[..]) {
+        match NewSessionEvent::<DefaultNodeRuntime>::decode(&mut &raw_event.data[..]) {
           Ok(event) => {
             info!("Successfully decoded event {:?}", event);
             self.validators().await?;
@@ -223,7 +224,6 @@ impl Sync {
     // If subscription has closed for some reason await and subscribe again
     Err(SyncError::SubscriptionFinished)
   }
-
   /// Spawn history and subscription sincronization tasks
   pub fn run() {
     spawn_and_restart_history_on_error();
