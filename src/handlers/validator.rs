@@ -142,7 +142,7 @@ pub async fn get_validator(
         .map_err(CacheError::RedisCMDError)?;
 
     if data.len() == 0 {
-        let not_found = format!("validator stash {} not available", stash);
+        let not_found = format!("validator address {} not available", stash);
         return Err(ApiError::NotFound(not_found));
     }
     data.insert("stash".to_string(), stash.to_string());
