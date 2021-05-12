@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Add Rank field to a Validator
+
 ## [0.1.0] - 2021-04-19
 
 - First release

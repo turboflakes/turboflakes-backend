@@ -80,7 +80,7 @@ pub enum Key {
   BoardAtEra(EraIndex, String),
   ValidatorAtEraScan(AccountId32),
   Validator(AccountId32),
-  ActiveErasByValidator(AccountId32),
+  ActiveErasByValidator(AccountId32)
 }
 
 impl std::fmt::Display for Key {

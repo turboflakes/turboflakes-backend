@@ -37,6 +37,7 @@ pub struct Validator {
     pub stash: String,
     pub controller: String,
     pub name: String,
+    pub rank: u32,
     pub own_stake: u128,
     pub nominators: u32,
     pub nominators_stake: u128,
@@ -60,6 +61,11 @@ impl From<ValidatorCache> for Validator {
                 .unwrap_or(&"".to_string())
                 .to_string(),
             name: data.get("name").unwrap_or(&"".to_string()).to_string(),
+            rank: data
+                .get("rank")
+                .unwrap_or(&zero)
+                .parse::<u32>()
+                .unwrap_or_default(),
             own_stake: data
                 .get("own_stake")
                 .unwrap_or(&zero)
@@ -124,6 +130,7 @@ type ValidatorResponse = Validator;
 /// Get a validator
 pub async fn get_validator(
     stash: Path<String>,
+    params: Query<Params>,
     cache: Data<RedisPool>,
 ) -> Result<Json<ValidatorResponse>, ApiError> {
     let mut conn = get_conn(&cache).await?;
@@ -139,6 +146,47 @@ pub async fn get_validator(
         return Err(ApiError::NotFound(not_found));
     }
     data.insert("stash".to_string(), stash.to_string());
+
+    // Set field rank if params are correctly defined
+    if let Some(key) = match params.q {
+        Queries::Board => {
+            let era_index: EraIndex = redis::cmd("GET")
+                .arg(sync::Key::ActiveEra)
+                .query_async(&mut conn as &mut Connection)
+                .await
+                .map_err(CacheError::RedisCMDError)?;
+            Some(sync::Key::BoardAtEra(era_index, get_board_name(&params.w)))
+        }
+        _ => None,
+    } {
+        let exists: bool = redis::cmd("EXISTS")
+            .arg(key.clone())
+            .query_async(&mut conn as &mut Connection)
+            .await
+            .map_err(CacheError::RedisCMDError)?;
+
+        if !exists {
+            let era_index: EraIndex = redis::cmd("GET")
+                .arg(sync::Key::ActiveEra)
+                .query_async(&mut conn as &mut Connection)
+                .await
+                .map_err(CacheError::RedisCMDError)?;
+            // Generate and cache leaderboard
+            generate_board(era_index, &params.w, cache).await?;
+        }
+        if let redis::Value::Int(mut rank) = redis::cmd("ZREVRANK")
+            .arg(key.clone())
+            .arg(stash.to_string())
+            .query_async(&mut conn as &mut Connection)
+            .await
+            .map_err(CacheError::RedisCMDError)?
+        {
+            // Redis rank is index based
+            rank += 1; 
+            data.insert("rank".to_string(), rank.to_string());
+        }
+    }
+
     respond_json(data.into())
 }
 
@@ -288,6 +336,7 @@ enum Queries {
     All = 1,
     Active = 2,
     Board = 3,
+    Other = 4,
 }
 
 impl std::fmt::Display for Queries {
@@ -296,6 +345,7 @@ impl std::fmt::Display for Queries {
             Self::All => write!(f, "all"),
             Self::Active => write!(f, "active"),
             Self::Board => write!(f, "board"),
+            Self::Other => write!(f, "other"),
         }
     }
 }
@@ -324,11 +374,21 @@ type Quantity = u32;
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]
 pub struct Params {
+    #[serde(default = "default_queries")]
     q: Queries,
-    #[serde(default)]
+    #[serde(default = "default_weights")]
     #[serde(deserialize_with = "parse_weights")]
     w: Weights,
+    #[serde(default)]
     n: Quantity,
+}
+
+fn default_queries() -> Queries {
+    Queries::Other
+}
+
+fn default_weights() -> Weights {
+    vec![0; WEIGHTS_CAPACITY]
 }
 
 fn parse_weights<'de, D>(d: D) -> Result<Weights, D::Error>
@@ -561,6 +621,11 @@ pub async fn get_validators(
         }
         Queries::All => sync::Key::BoardAtEra(era_index, sync::BOARD_ALL_VALIDATORS.to_string()),
         Queries::Board => sync::Key::BoardAtEra(era_index, get_board_name(&params.w)),
+        _ => {
+            let msg =
+                format!("Parameter q must be equal to one of the options: [Active, All, Board]");
+            return Err(ApiError::BadRequest(msg));
+        }
     };
 
     let exists: bool = redis::cmd("EXISTS")
