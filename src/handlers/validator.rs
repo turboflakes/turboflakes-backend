@@ -37,7 +37,6 @@ pub struct Validator {
     pub stash: String,
     pub controller: String,
     pub name: String,
-    pub rank: u32,
     pub own_stake: u128,
     pub nominators: u32,
     pub nominators_stake: u128,
@@ -61,11 +60,6 @@ impl From<ValidatorCache> for Validator {
                 .unwrap_or(&"".to_string())
                 .to_string(),
             name: data.get("name").unwrap_or(&"".to_string()).to_string(),
-            rank: data
-                .get("rank")
-                .unwrap_or(&zero)
-                .parse::<u32>()
-                .unwrap_or_default(),
             own_stake: data
                 .get("own_stake")
                 .unwrap_or(&zero)
@@ -130,7 +124,7 @@ type ValidatorResponse = Validator;
 /// Get a validator
 pub async fn get_validator(
     stash: Path<String>,
-    params: Query<Params>,
+    _params: Query<Params>,
     cache: Data<RedisPool>,
 ) -> Result<Json<ValidatorResponse>, ApiError> {
     let mut conn = get_conn(&cache).await?;
@@ -142,13 +136,31 @@ pub async fn get_validator(
         .map_err(CacheError::RedisCMDError)?;
 
     if data.len() == 0 {
-        let not_found = format!("validator account with address {} not found", stash);
-        return Err(ApiError::NotFound(not_found));
+        let msg = format!("validator account with address {} not found", stash);
+        return Err(ApiError::NotFound(msg));
     }
     data.insert("stash".to_string(), stash.to_string());
 
+    respond_json(data.into())
+}
+
+#[derive(Debug, Serialize, PartialEq)]
+pub struct ValidatorRankResponse {
+    pub stash: String,
+    pub rank: i64,
+}
+
+/// Get a validator rank
+pub async fn get_validator_rank(
+    stash: Path<String>,
+    params: Query<Params>,
+    cache: Data<RedisPool>,
+) -> Result<Json<ValidatorRankResponse>, ApiError> {
+    let mut conn = get_conn(&cache).await?;
+    let stash = AccountId32::from_str(&*stash.to_string())?;
+    
     // Set field rank if params are correctly defined
-    if let Some(key) = match params.q {
+    let key = match params.q {
         Queries::Board => {
             let era_index: EraIndex = redis::cmd("GET")
                 .arg(sync::Key::ActiveEra)
@@ -157,37 +169,50 @@ pub async fn get_validator(
                 .map_err(CacheError::RedisCMDError)?;
             Some(sync::Key::BoardAtEra(era_index, get_board_name(&params.w)))
         }
-        _ => None,
-    } {
-        let exists: bool = redis::cmd("EXISTS")
-            .arg(key.clone())
+        _ => {
+            let msg = format!("Parameter q must be equal to one of the options: [Board]");
+            return Err(ApiError::BadRequest(msg));
+        }
+    };
+
+    let exists: bool = redis::cmd("EXISTS")
+        .arg(key.clone())
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    if !exists {
+        let era_index: EraIndex = redis::cmd("GET")
+            .arg(sync::Key::ActiveEra)
             .query_async(&mut conn as &mut Connection)
             .await
             .map_err(CacheError::RedisCMDError)?;
-
-        if !exists {
-            let era_index: EraIndex = redis::cmd("GET")
-                .arg(sync::Key::ActiveEra)
-                .query_async(&mut conn as &mut Connection)
-                .await
-                .map_err(CacheError::RedisCMDError)?;
-            // Generate and cache leaderboard
-            generate_board(era_index, &params.w, cache).await?;
-        }
-        if let redis::Value::Int(mut rank) = redis::cmd("ZREVRANK")
-            .arg(key.clone())
-            .arg(stash.to_string())
-            .query_async(&mut conn as &mut Connection)
-            .await
-            .map_err(CacheError::RedisCMDError)?
-        {
-            // Redis rank is index based
-            rank += 1; 
-            data.insert("rank".to_string(), rank.to_string());
-        }
+        // Generate and cache leaderboard
+        generate_board(era_index, &params.w, cache).await?;
     }
 
-    respond_json(data.into())
+    match redis::cmd("ZREVRANK")
+        .arg(key.clone())
+        .arg(stash.to_string())
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?
+    {
+        redis::Value::Int(mut rank) => {
+            // Redis rank is index based
+            rank += 1;
+            respond_json(
+                ValidatorRankResponse{
+                    stash: stash.to_string(),
+                    rank: rank
+                }
+            )
+        }
+        _ => {
+            let msg = format!("validator account with address {} not found", stash);
+            return Err(ApiError::NotFound(msg));
+        }
+    }
 }
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -311,9 +336,9 @@ pub async fn get_validator_eras(
                     .await
                     .map_err(CacheError::RedisCMDError)?;
 
-                let not_found = format!("cache key {} not available", key);
                 if data.len() == 0 {
-                    return Err(ApiError::NotFound(not_found));
+                    let msg = format!("cache key {} not available", key);
+                    return Err(ApiError::NotFound(msg));
                 }
                 if let Some(x) = key.find(':') {
                     data.insert("era_index".to_string(), String::from(&key[..x]));

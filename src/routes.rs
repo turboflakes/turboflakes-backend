@@ -23,7 +23,7 @@ use crate::handlers::{
   era::get_era,
   health::get_health,
   info::get_info,
-  validator::{get_validator, get_validator_eras, get_validators},
+  validator::{get_validator, get_validator_rank, get_validator_eras, get_validators},
 };
 use actix_web::web;
 
@@ -43,6 +43,7 @@ pub fn routes(cfg: &mut web::ServiceConfig) {
         .service(
           web::scope("/validator")
             .route("/{stash}", web::get().to(get_validator))
+            .route("/{stash}/rank", web::get().to(get_validator_rank))
             .route("/{stash}/eras", web::get().to(get_validator_eras))
             .route("", web::get().to(get_validators)),
         ),
