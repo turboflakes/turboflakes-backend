@@ -413,7 +413,7 @@ where
 
 #[derive(Debug, Serialize, PartialEq)]
 pub struct ValidatorsResponse {
-    pub data: Vec<String>,
+    pub addresses: Vec<String>,
 }
 
 fn get_board_name(weights: &Weights) -> String {
@@ -652,5 +652,5 @@ pub async fn get_validators(
         .await
         .map_err(CacheError::RedisCMDError)?;
 
-    respond_json(ValidatorsResponse { data: stashes })
+    respond_json(ValidatorsResponse { addresses: stashes })
 }
