@@ -24,6 +24,7 @@ use crate::errors::{ApiError, CacheError};
 use crate::helpers::respond_json;
 use crate::sync::{stats, sync};
 use actix_web::web::{Data, Json, Path, Query};
+use log::{error, warn};
 use redis::aio::Connection;
 use serde::{de::Deserializer, Deserialize, Serialize};
 use std::{collections::BTreeMap, str::FromStr};
@@ -136,7 +137,8 @@ pub async fn get_validator(
         .map_err(CacheError::RedisCMDError)?;
 
     if data.len() == 0 {
-        let msg = format!("validator account with address {} not found", stash);
+        let msg = format!("Validator account with address {} not found", stash);
+        warn!("{}", msg);
         return Err(ApiError::NotFound(msg));
     }
     data.insert("stash".to_string(), stash.to_string());
@@ -158,7 +160,6 @@ pub async fn get_validator_rank(
 ) -> Result<Json<ValidatorRankResponse>, ApiError> {
     let mut conn = get_conn(&cache).await?;
     let stash = AccountId32::from_str(&*stash.to_string())?;
-    
     // Set field rank if params are correctly defined
     let key = match params.q {
         Queries::Board => {
@@ -171,6 +172,7 @@ pub async fn get_validator_rank(
         }
         _ => {
             let msg = format!("Parameter q must be equal to one of the options: [Board]");
+            warn!("{}", msg);
             return Err(ApiError::BadRequest(msg));
         }
     };
@@ -201,15 +203,13 @@ pub async fn get_validator_rank(
         redis::Value::Int(mut rank) => {
             // Redis rank is index based
             rank += 1;
-            respond_json(
-                ValidatorRankResponse{
-                    stash: stash.to_string(),
-                    rank: rank
-                }
-            )
+            respond_json(ValidatorRankResponse {
+                stash: stash.to_string(),
+                rank: rank,
+            })
         }
         _ => {
-            let msg = format!("validator account with address {} not found", stash);
+            let msg = format!("Validator account with address {} not found", stash);
             return Err(ApiError::NotFound(msg));
         }
     }
@@ -338,7 +338,8 @@ pub async fn get_validator_eras(
 
                 if data.len() == 0 {
                     let msg = format!("cache key {} not available", key);
-                    return Err(ApiError::NotFound(msg));
+                    error!("{}", msg);
+                    continue;
                 }
                 if let Some(x) = key.find(':') {
                     data.insert("era_index".to_string(), String::from(&key[..x]));
@@ -647,8 +648,11 @@ pub async fn get_validators(
         Queries::All => sync::Key::BoardAtEra(era_index, sync::BOARD_ALL_VALIDATORS.to_string()),
         Queries::Board => sync::Key::BoardAtEra(era_index, get_board_name(&params.w)),
         _ => {
-            let msg =
-                format!("Parameter q must be equal to one of the options: [Active, All, Board]");
+            let msg = format!(
+                "Parameter q={} must be equal to one of the options: [Active, All, Board]",
+                params.q
+            );
+            warn!("{}", msg);
             return Err(ApiError::BadRequest(msg));
         }
     };
