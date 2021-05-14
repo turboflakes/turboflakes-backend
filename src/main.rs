@@ -54,17 +54,23 @@ async fn main() -> std::io::Result<()> {
     // Start http server
     let addr = format!("{}:{}", config.turboflakes_host, config.turboflakes_port);
     HttpServer::new(move || {
-        let cors = Cors::default()
-            .allowed_origin_fn(|origin, _req_head| {
-                let allowed_origin =
-                    env::var("TURBOFLAKES_CORS_ALLOW_ORIGIN").unwrap_or("localhost".to_string());
-                origin.as_bytes().ends_with(allowed_origin.as_bytes())
-            })
-            .allowed_methods(vec!["GET"])
-            .allowed_headers(vec![http::header::CONTENT_TYPE])
-            .supports_credentials()
-            .max_age(3600);
-
+        let cors = if env::var("TURBOFLAKES_CORS_ALLOW_ORIGIN").is_err() {
+            Cors::default()
+                .allow_any_header()
+                .allow_any_method()
+                .allow_any_origin()
+        } else {
+            Cors::default()
+                .allowed_origin_fn(|origin, _req_head| {
+                    let allowed_origin = env::var("TURBOFLAKES_CORS_ALLOW_ORIGIN")
+                        .unwrap_or("localhost".to_string());
+                    origin.as_bytes().ends_with(allowed_origin.as_bytes())
+                })
+                .allowed_methods(vec!["GET"])
+                .allowed_headers(vec![http::header::CONTENT_TYPE])
+                .supports_credentials()
+                .max_age(3600)
+        };
         App::new()
             .wrap(middleware::Logger::default())
             .wrap(cors)

@@ -7,8 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- Add validator rank endpoint to get the rank of a validator address in a specific board
-
 ## [0.1.0] - 2021-04-19
 
 - First release
@@ -120,3 +118,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Fix subscribe new session events typo
+
+## [0.5.0] - 2021-05-14
+
+### Added
+  
+- Add validator rank endpoint to get the rank of a validator address in a specific board
+- Change error response messages
+
+## [0.5.1] - 2021-05-14
+
+### Change
+  
+- Fix cors
