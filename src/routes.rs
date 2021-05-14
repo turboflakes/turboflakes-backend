@@ -37,6 +37,8 @@ pub fn routes(cfg: &mut web::ServiceConfig) {
     // /api/v1 routes
     .service(
       web::scope("/api/v1")
+        // API info
+        .route("", web::get().to(get_info))
         // ERA routes
         .service(web::scope("/era").route("/{era_index}", web::get().to(get_era)))
         // VALIDATOR routes

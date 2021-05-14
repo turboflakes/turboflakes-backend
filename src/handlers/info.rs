@@ -19,11 +19,14 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::errors::ApiError;
+use crate::cache::{get_conn, RedisPool};
+use crate::errors::{ApiError, CacheError};
 use crate::helpers::respond_json;
-use actix_web::web::Json;
+use crate::sync::sync;
+use actix_web::web::{Data, Json};
+use redis::aio::Connection;
 use serde::{Deserialize, Serialize};
-use std::env;
+use std::{collections::BTreeMap, env};
 
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
 pub struct InfoResponse {
@@ -31,14 +34,65 @@ pub struct InfoResponse {
     pub version: String,
     pub api_path: String,
     pub substrate_node_url: String,
+    pub cache: CacheInfoResponse,
+}
+
+#[derive(Debug, Deserialize, Serialize, PartialEq)]
+pub struct CacheInfoResponse {
+    pub syncing: bool,
+    pub syncing_started_at: u32,
+    pub syncing_finished_at: u32,
+    pub validators: u32,
+    pub nominators: u32,
+}
+
+impl From<BTreeMap<String, String>> for CacheInfoResponse {
+    fn from(data: BTreeMap<String, String>) -> Self {
+        let zero = "0".to_string();
+        CacheInfoResponse {
+            syncing: data
+                .get("syncing")
+                .unwrap_or(&zero)
+                .parse::<bool>()
+                .unwrap_or_default(),
+            syncing_started_at: data
+                .get("syncing_started_at")
+                .unwrap_or(&zero)
+                .parse::<u32>()
+                .unwrap_or_default(),
+            syncing_finished_at: data
+                .get("syncing_finished_at")
+                .unwrap_or(&zero)
+                .parse::<u32>()
+                .unwrap_or_default(),
+            validators: data
+                .get("validators")
+                .unwrap_or(&zero)
+                .parse::<u32>()
+                .unwrap_or_default(),
+            nominators: data
+                .get("nominators")
+                .unwrap_or(&zero)
+                .parse::<u32>()
+                .unwrap_or_default(),
+        }
+    }
 }
 
 /// Handler to get information about the service
-pub async fn get_info() -> Result<Json<InfoResponse>, ApiError> {
+pub async fn get_info(cache: Data<RedisPool>) -> Result<Json<InfoResponse>, ApiError> {
+    let mut conn = get_conn(&cache).await?;
+    let data: BTreeMap<String, String> = redis::cmd("HGETALL")
+        .arg(sync::Key::Info)
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
     respond_json(InfoResponse {
         name: env!("CARGO_PKG_NAME").into(),
         version: env!("CARGO_PKG_VERSION").into(),
         api_path: "/api/v1".into(),
         substrate_node_url: env::var("SUBSTRATE_WS_URL").unwrap_or_default().into(),
+        cache: data.into(),
     })
 }

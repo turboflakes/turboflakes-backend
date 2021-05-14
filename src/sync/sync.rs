@@ -74,18 +74,20 @@ fn get_account_id_from_storage_key(key: StorageKey) -> AccountId32 {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Key {
+  Info,
   ActiveEra,
   Era(EraIndex),
   ValidatorAtEra(EraIndex, AccountId32),
   BoardAtEra(EraIndex, String),
   ValidatorAtEraScan(AccountId32),
   Validator(AccountId32),
-  ActiveErasByValidator(AccountId32)
+  ActiveErasByValidator(AccountId32),
 }
 
 impl std::fmt::Display for Key {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match self {
+      Self::Info => write!(f, "info"),
       Self::ActiveEra => write!(f, "era:active"),
       Self::Era(era_index) => write!(f, "{}:era", era_index),
       Self::ValidatorAtEra(era_index, stash_account) => {
@@ -106,6 +108,11 @@ impl redis::ToRedisArgs for Key {
   {
     out.write_arg(self.to_string().as_bytes())
   }
+}
+
+pub enum Status {
+  Started = 1,
+  Finished = 2,
 }
 
 pub struct Sync {
@@ -154,6 +161,8 @@ impl Sync {
   async fn history(&self) -> Result<(), SyncError> {
     self.ready_or_await().await;
 
+    self.status(Status::Started).await?;
+
     let active_era = self.active_era().await?;
 
     self.eras_history_depth(active_era).await?;
@@ -163,6 +172,8 @@ impl Sync {
     self.nominators().await?;
 
     self.active_validators().await?;
+
+    self.status(Status::Finished).await?;
 
     Ok(())
   }
@@ -182,9 +193,11 @@ impl Sync {
         match EraPayoutEvent::<DefaultNodeRuntime>::decode(&mut &raw_event.data[..]) {
           Ok(event) => {
             info!("Successfully decoded event {:?}", event);
+            self.status(Status::Started).await?;
             self.active_era().await?;
             self.eras_history(event.era_index, Some(true)).await?;
             self.active_validators().await?;
+            self.status(Status::Finished).await?;
           }
           Err(e) => {
             error!("Decoding event error: {:?}", e);
@@ -211,8 +224,10 @@ impl Sync {
         match NewSessionEvent::<DefaultNodeRuntime>::decode(&mut &raw_event.data[..]) {
           Ok(event) => {
             info!("Successfully decoded event {:?}", event);
+            self.status(Status::Started).await?;
             self.validators().await?;
             self.nominators().await?;
+            self.status(Status::Finished).await?;
           }
           Err(e) => {
             error!("Decoding event error: {:?}", e);
@@ -249,6 +264,42 @@ impl Sync {
 
     info!("Successfully synced active era {}", active_era.index);
     Ok(active_era.index)
+  }
+
+  /// Cache syncronization status
+  async fn status(&self, status: Status) -> Result<(), SyncError> {
+    let mut conn = self
+      .cache_pool
+      .get()
+      .await
+      .map_err(CacheError::RedisPoolError)?;
+
+    let mut data: BTreeMap<String, String> = BTreeMap::new();
+    match status {
+      Status::Started => {
+        data.insert("syncing".to_string(), "true".to_string());
+        data.insert(
+          "syncing_started_at".to_string(),
+          Utc::now().timestamp().to_string(),
+        );
+      }
+      Status::Finished => {
+        data.insert("syncing".to_string(), "false".to_string());
+        data.insert(
+          "syncing_finished_at".to_string(),
+          Utc::now().timestamp().to_string(),
+        );
+      }
+    }
+
+    let _: () = redis::cmd("HSET")
+      .arg(Key::Info)
+      .arg(data)
+      .query_async(&mut conn as &mut Connection)
+      .await
+      .map_err(CacheError::RedisCMDError)?;
+
+    Ok(())
   }
 
   /// Sync all validators currently available
@@ -381,6 +432,13 @@ impl Sync {
       }
     }
 
+    let _: () = redis::cmd("HSET")
+      .arg(Key::Info)
+      .arg(&[("validators", i.to_string())])
+      .query_async(&mut conn as &mut Connection)
+      .await
+      .map_err(CacheError::RedisCMDError)?;
+
     info!(
       "Successfully synced {} validators in era {}",
       i, active_era.index
@@ -452,6 +510,12 @@ impl Sync {
       i += 1;
       debug!("Successfully synced nominator with stash {}", stash);
     }
+    let _: () = redis::cmd("HSET")
+      .arg(Key::Info)
+      .arg(&[("nominators", i.to_string())])
+      .query_async(&mut conn as &mut Connection)
+      .await
+      .map_err(CacheError::RedisCMDError)?;
     info!("Successfully synced {} nominators", i);
     Ok(())
   }
