@@ -31,7 +31,8 @@ use crate::cache::add_pool;
 use crate::config::CONFIG;
 use crate::routes::routes;
 use crate::sync::sync::Sync;
-use actix_web::{middleware, App, HttpServer};
+use actix_web::{http, middleware, App, HttpServer};
+use actix_cors::Cors;
 use log::info;
 use std::env;
 
@@ -53,15 +54,19 @@ async fn main() -> std::io::Result<()> {
     // Start http server
     let addr = format!("{}:{}", config.turboflakes_host, config.turboflakes_port);
     HttpServer::new(move || {
-        let allowed_origin = env::var("TURBOFLAKES_CORS_ALLOW_ORIGIN").unwrap_or("*".to_string());
+        let cors = Cors::default()
+            .allowed_origin_fn(|origin, _req_head| {
+                let allowed_origin =
+                    env::var("TURBOFLAKES_CORS_ALLOW_ORIGIN").unwrap_or("*".to_string());
+                origin.as_bytes().ends_with(allowed_origin.as_bytes())
+            })
+            .allowed_methods(vec!["GET", "OPTIONS"])
+            .allowed_headers(vec![http::header::CONTENT_TYPE])
+            .supports_credentials()
+            .max_age(3600);
         App::new()
-            .wrap(
-                middleware::DefaultHeaders::new()
-                    .header("Access-Control-Allow-Origin", allowed_origin)
-                    .header("Access-Control-Allow-Credentials", "true")
-                    .header("Content-Type", "application/json"),
-            )
             .wrap(middleware::Logger::default())
+            .wrap(cors)
             .configure(add_pool)
             .configure(routes)
     })

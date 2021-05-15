@@ -126,14 +126,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add validator rank endpoint to get the rank of a validator address in a specific board
 - Change error response messages
 
-## [0.5.1] - 2021-05-14
+## [0.5.3] - 2021-05-15
 
 ### Change
   
-- Fix cors
-
-## [0.5.2] - 2021-05-15
-
-### Change
-  
-- Remove package cors
+- Change CORS
