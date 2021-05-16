@@ -27,7 +27,7 @@ use actix_web::web::{Data, Json, Path, Query};
 use log::{error, warn};
 use redis::aio::Connection;
 use serde::{de::Deserializer, Deserialize, Serialize};
-use std::{collections::BTreeMap, str::FromStr};
+use std::{collections::BTreeMap, str::FromStr, thread, time};
 use substrate_subxt::{sp_runtime::AccountId32, staking::EraIndex};
 
 type ValidatorCache = BTreeMap<String, String>;
@@ -177,20 +177,26 @@ pub async fn get_validator_rank(
         }
     };
 
-    let exists: bool = redis::cmd("EXISTS")
+    // Sometimes the board is still not available since it has been
+    // requested at the same time and is still being generated. For these situations
+    // just wait and try again.
+    // If it fails after 10 attempts return error.
+    let mut i = 0;
+    while let redis::Value::Int(0) = redis::cmd("EXISTS")
         .arg(key.clone())
         .query_async(&mut conn as &mut Connection)
         .await
-        .map_err(CacheError::RedisCMDError)?;
-
-    if !exists {
-        let era_index: EraIndex = redis::cmd("GET")
-            .arg(sync::Key::ActiveEra)
-            .query_async(&mut conn as &mut Connection)
-            .await
-            .map_err(CacheError::RedisCMDError)?;
-        // Generate and cache leaderboard
-        generate_board(era_index, &params.w, cache).await?;
+        .map_err(CacheError::RedisCMDError)?
+    {
+        if i == 10 {
+            let msg = format!("The Leaderboard is still being generated. The rank for stash {} is not yet available.", stash);
+            error!("{}", msg);
+            return Err(ApiError::NotFound(msg));
+        }
+        let msg = format!("The rank for stash {} is not yet available. Wait a second and try again.", stash);
+        warn!("{}", msg);
+        thread::sleep(time::Duration::from_secs(1));
+        i += 1;
     }
 
     match redis::cmd("ZREVRANK")
@@ -210,6 +216,7 @@ pub async fn get_validator_rank(
         }
         _ => {
             let msg = format!("Validator account with address {} not found", stash);
+            warn!("{}", msg);
             return Err(ApiError::NotFound(msg));
         }
     }
