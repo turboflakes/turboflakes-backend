@@ -131,3 +131,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Change
   
 - Change CORS
+
+## [0.5.4] - 2021-05-16
+
+### Change
+  
+- Handle validator rank in a better way. If board not available wait.
