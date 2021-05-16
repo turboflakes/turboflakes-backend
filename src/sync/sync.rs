@@ -196,7 +196,9 @@ impl Sync {
             self.status(Status::Started).await?;
             self.active_era().await?;
             self.eras_history(event.era_index, Some(true)).await?;
+            self.validators().await?;
             self.active_validators().await?;
+            self.nominators().await?;
             self.status(Status::Finished).await?;
           }
           Err(e) => {
@@ -210,6 +212,7 @@ impl Sync {
   }
 
   /// Sync all validators and nominators every session
+  #[allow(dead_code)]
   async fn subscribe_new_session_events(&self) -> Result<(), SyncError> {
     info!("Starting new session subscription");
     self.ready_or_await().await;
@@ -241,8 +244,10 @@ impl Sync {
   /// Spawn history and subscription sincronization tasks
   pub fn run() {
     spawn_and_restart_history_on_error();
+    // Note: Just make a full sync every era payout event
     spawn_and_restart_era_payout_subscription_on_error();
-    spawn_and_restart_new_session_subscription_on_error();
+    // TODO: Single track events based on the feature that got changed
+    // spawn_and_restart_new_session_subscription_on_error();
   }
 
   /// Sync active era
@@ -1006,6 +1011,7 @@ pub fn spawn_and_restart_era_payout_subscription_on_error() {
   });
 }
 
+#[allow(dead_code)]
 pub fn spawn_and_restart_new_session_subscription_on_error() {
   task::spawn(async {
     loop {
