@@ -144,3 +144,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   
 - Only make a full sync at era payout.
 - Only generate leaderboard when cache syncing is finished.
+- Draft leaderboard stats counter
