@@ -193,7 +193,10 @@ pub async fn get_validator_rank(
             error!("{}", msg);
             return Err(ApiError::NotFound(msg));
         }
-        let msg = format!("The rank for stash {} is not yet available. Wait a second and try again.", stash);
+        let msg = format!(
+            "The rank for stash {} is not yet available. Wait a second and try again.",
+            stash
+        );
         warn!("{}", msg);
         thread::sleep(time::Duration::from_secs(1));
         i += 1;
@@ -671,6 +674,23 @@ pub async fn get_validators(
         .map_err(CacheError::RedisCMDError)?;
 
     if !exists {
+        // Only generate board if cache is not syncing
+        let res: Option<String> = redis::cmd("HGET")
+            .arg(sync::Key::Info)
+            .arg("syncing")
+            .query_async(&mut conn as &mut Connection)
+            .await
+            .map_err(CacheError::RedisCMDError)?;
+        let syncing = match res {
+            Some(v) => v.parse::<bool>().unwrap_or_default(),
+            None => false,
+        };
+        if syncing {
+            let msg = format!(
+                "The system is currently syncing. Usually doesn't take long 5 - 10min. Please just wait a few minutes before you try again. Thank you.");
+            warn!("{}", msg);
+            return Err(ApiError::NotFound(msg));
+        }
         // Generate and cache leaderboard
         generate_board(era_index, &params.w, cache).await?;
     }
