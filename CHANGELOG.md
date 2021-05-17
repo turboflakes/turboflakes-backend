@@ -137,3 +137,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Change
   
 - Handle validator rank in a better way. If board not available wait.
+
+## [0.5.5] - 2021-05-17
+
+### Change
+  
+- Only make a full sync at era payout.
+- Only generate leaderboard when cache syncing is finished.
