@@ -75,6 +75,7 @@ fn get_account_id_from_storage_key(key: StorageKey) -> AccountId32 {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Key {
   Info,
+  Stats,
   ActiveEra,
   Era(EraIndex),
   ValidatorAtEra(EraIndex, AccountId32),
@@ -88,6 +89,7 @@ impl std::fmt::Display for Key {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match self {
       Self::Info => write!(f, "info"),
+      Self::Stats => write!(f, "stats"),
       Self::ActiveEra => write!(f, "era:active"),
       Self::Era(era_index) => write!(f, "{}:era", era_index),
       Self::ValidatorAtEra(era_index, stash_account) => {

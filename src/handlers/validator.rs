@@ -695,6 +695,15 @@ pub async fn get_validators(
         generate_board(era_index, &params.w, cache).await?;
     }
 
+    // Increase board stats counter
+    let _: () = redis::cmd("HINCRBY")
+        .arg(sync::Key::Stats)
+        .arg(key.clone())
+        .arg(1)
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
     let stashes: Vec<String> = redis::cmd("ZRANGE")
         .arg(key.clone())
         .arg("+inf")
