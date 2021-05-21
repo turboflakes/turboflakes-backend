@@ -150,6 +150,8 @@ pub async fn get_validator(
 pub struct ValidatorRankResponse {
     pub stash: String,
     pub rank: i64,
+    // pub scores: Vec<f64>,
+    pub scores: String,
 }
 
 /// Get a validator rank
@@ -161,14 +163,16 @@ pub async fn get_validator_rank(
     let mut conn = get_conn(&cache).await?;
     let stash = AccountId32::from_str(&*stash.to_string())?;
     // Set field rank if params are correctly defined
-    let key = match params.q {
+    let board_name = match params.q {
         Queries::Board => {
-            let era_index: EraIndex = redis::cmd("GET")
-                .arg(sync::Key::ActiveEra)
-                .query_async(&mut conn as &mut Connection)
-                .await
-                .map_err(CacheError::RedisCMDError)?;
-            Some(sync::Key::BoardAtEra(era_index, get_board_name(&params.w)))
+            // let era_index: EraIndex = redis::cmd("GET")
+            //     .arg(sync::Key::ActiveEra)
+            //     .query_async(&mut conn as &mut Connection)
+            //     .await
+            //     .map_err(CacheError::RedisCMDError)?;
+            // Some(sync::Key::BoardAtEra(era_index, get_board_name(&params.w)))
+            // Some(sync::Key::BoardAtEra(era_index, get_board_name(&params.w)))
+            get_board_name(&params.w)
         }
         _ => {
             let msg = format!("Parameter q must be equal to one of the options: [Board]");
@@ -176,6 +180,15 @@ pub async fn get_validator_rank(
             return Err(ApiError::BadRequest(msg));
         }
     };
+
+    let era_index: EraIndex = redis::cmd("GET")
+        .arg(sync::Key::ActiveEra)
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    let key = sync::Key::BoardAtEra(era_index, board_name.clone());
+    let key_scores = sync::Key::BoardAtEra(era_index, format!("{}:scores", board_name));
 
     // Sometimes the board is still not available since it has been
     // requested at the same time and is still being generated. For these situations
@@ -202,7 +215,8 @@ pub async fn get_validator_rank(
         i += 1;
     }
 
-    match redis::cmd("ZREVRANK")
+    // Get rank
+    let rank = match redis::cmd("ZREVRANK")
         .arg(key.clone())
         .arg(stash.to_string())
         .query_async(&mut conn as &mut Connection)
@@ -212,17 +226,37 @@ pub async fn get_validator_rank(
         redis::Value::Int(mut rank) => {
             // Redis rank is index based
             rank += 1;
-            respond_json(ValidatorRankResponse {
-                stash: stash.to_string(),
-                rank: rank,
-            })
+            rank
         }
         _ => {
-            let msg = format!("Validator account with address {} not found", stash);
+            let msg = format!("Validator rank with address {} not found", stash);
             warn!("{}", msg);
             return Err(ApiError::NotFound(msg));
         }
-    }
+    };
+
+    // Get scores
+    // TODO: convert it to Vec<f64>
+    let scores = match redis::cmd("HGET")
+        .arg(key_scores.to_string())
+        .arg(stash.to_string())
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?
+    {
+        redis::Value::Data(scores) => String::from_utf8(scores).unwrap(),
+        _ => {
+            let msg = format!("Validator scores with address {} not found", stash);
+            warn!("{}", msg);
+            return Err(ApiError::NotFound(msg));
+        }
+    };
+
+    respond_json(ValidatorRankResponse {
+        stash: stash.to_string(),
+        rank: rank,
+        scores: scores,
+    })
 }
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -465,20 +499,20 @@ fn get_board_name(weights: &Weights) -> String {
         .collect()
 }
 
-/// Normalize inclusion rate between 0 - 100
-fn normaliza_inclusion(inclusion_rate: f32) -> f64 {
-    (inclusion_rate * 100.0) as f64
+/// Normalize inclusion rate between 0 - 1
+fn normalize_inclusion(inclusion_rate: f32) -> f64 {
+    inclusion_rate as f64
 }
 
-/// Reverse Normalize commission between 0 - 100
+/// Reverse Normalize commission between 0 - 1
 /// lower commission the better
 fn reverse_normalize_commission(commission: u32) -> f64 {
-    100.0 - (commission / 10000000) as f64
+    1.0 - (commission / 1000000000) as f64
 }
 
-/// Normalize boolean flag between 0 - 100
+/// Normalize boolean flag between 0 - 1
 fn normalize_flag(flag: bool) -> f64 {
-    (flag as u32 * 100) as f64
+    (flag as u32) as f64
 }
 
 /// Normalize value between 0 - 100
@@ -486,12 +520,12 @@ fn normalize_value(value: f64, min: f64, max: f64) -> f64 {
     if value == 0.0 {
         return 0.0;
     }
-    100.0 * ((value - min) / (max - min))
+    (value - min) / (max - min)
 }
 
 /// Reverse normalization
 fn reverse_normalize_value(value: f64, min: f64, max: f64) -> f64 {
-    100.0 - normalize_value(value, min, max)
+    1.0 - normalize_value(value, min, max)
 }
 
 async fn calculate_avg_points(cache: Data<RedisPool>, name: &str) -> Result<f64, ApiError> {
@@ -586,7 +620,9 @@ async fn generate_board(
         .await
         .map_err(CacheError::RedisCMDError)?;
 
-    let key = sync::Key::BoardAtEra(era_index, get_board_name(weights));
+    let board_name = get_board_name(weights);
+    let key = sync::Key::BoardAtEra(era_index, board_name.clone());
+    let key_scores = sync::Key::BoardAtEra(era_index, format!("{}:scores", board_name));
     for stash in stashes {
         let stash = AccountId32::from_str(&*stash.to_string())?;
         let data: ValidatorCache = redis::cmd("HGETALL")
@@ -602,35 +638,55 @@ async fn generate_board(
             continue;
         }
 
-        let score = normaliza_inclusion(validator.inclusion_rate) * weights[0] as f64
-            + reverse_normalize_commission(validator.commission) * weights[1] as f64
-            + normalize_value(
+        let mut score_data: Vec<f64> = Vec::with_capacity(WEIGHTS_CAPACITY);
+        score_data.push(normalize_inclusion(validator.inclusion_rate) * weights[0] as f64);
+        score_data.push(reverse_normalize_commission(validator.commission) * weights[1] as f64);
+        score_data.push(
+            normalize_value(
                 validator.avg_reward_points,
                 min_points_limit,
                 max_points_limit,
-            ) * weights[2] as f64
-            + normalize_flag(validator.reward_staked) * weights[3] as f64
-            + normalize_flag(validator.active) * weights[4] as f64
-            + normalize_value(
+            ) * weights[2] as f64,
+        );
+        score_data.push(normalize_flag(validator.reward_staked) * weights[3] as f64);
+        score_data.push(normalize_flag(validator.active) * weights[4] as f64);
+        score_data.push(
+            normalize_value(
                 validator.own_stake as f64,
                 min_own_stake_limit,
                 max_own_stake_limit,
-            ) * weights[5] as f64
-            + normalize_value(
+            ) * weights[5] as f64,
+        );
+        score_data.push(
+            normalize_value(
                 validator.judgements as f64,
                 min_judgements_limit,
                 max_judgements_limit,
-            ) * weights[6] as f64
-            + reverse_normalize_value(
+            ) * weights[6] as f64,
+        );
+        score_data.push(
+            reverse_normalize_value(
                 validator.sub_accounts as f64,
                 min_sub_accounts_limit,
                 max_sub_accounts_limit,
-            ) * weights[7] as f64;
+            ) * weights[7] as f64,
+        );
+        let score = score_data.iter().fold(0.0, |acc, x| acc + x);
 
+        // Cache total score
         let _: () = redis::cmd("ZADD")
             .arg(key.to_string())
             .arg(score) // score
             .arg(stash.to_string()) // member
+            .query_async(&mut conn as &mut Connection)
+            .await
+            .map_err(CacheError::RedisCMDError)?;
+
+        // Cache partial scores
+        let _: () = redis::cmd("HSET")
+            .arg(key_scores.to_string())
+            .arg(stash.to_string())
+            .arg(format!("{:?}", score_data))
             .query_async(&mut conn as &mut Connection)
             .await
             .map_err(CacheError::RedisCMDError)?;
