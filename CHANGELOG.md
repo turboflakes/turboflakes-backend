@@ -158,3 +158,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   
 - Cache scores and limits
 - Add scores and limits to Rank endpoint response
+
+## [0.6.1] - 2021-05-24
+
+### Change
+  
+- Fix commission score
