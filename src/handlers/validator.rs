@@ -146,12 +146,14 @@ pub async fn get_validator(
     respond_json(data.into())
 }
 
+type BoardLimits = BTreeMap<String, f64>;
+
 #[derive(Debug, Serialize, PartialEq)]
 pub struct ValidatorRankResponse {
     pub stash: String,
     pub rank: i64,
-    // pub scores: Vec<f64>,
-    pub scores: String,
+    pub scores: Vec<f64>,
+    pub limits: BoardLimits,
 }
 
 /// Get a validator rank
@@ -164,16 +166,7 @@ pub async fn get_validator_rank(
     let stash = AccountId32::from_str(&*stash.to_string())?;
     // Set field rank if params are correctly defined
     let board_name = match params.q {
-        Queries::Board => {
-            // let era_index: EraIndex = redis::cmd("GET")
-            //     .arg(sync::Key::ActiveEra)
-            //     .query_async(&mut conn as &mut Connection)
-            //     .await
-            //     .map_err(CacheError::RedisCMDError)?;
-            // Some(sync::Key::BoardAtEra(era_index, get_board_name(&params.w)))
-            // Some(sync::Key::BoardAtEra(era_index, get_board_name(&params.w)))
-            get_board_name(&params.w)
-        }
+        Queries::Board => get_board_name(&params.w),
         _ => {
             let msg = format!("Parameter q must be equal to one of the options: [Board]");
             warn!("{}", msg);
@@ -189,6 +182,7 @@ pub async fn get_validator_rank(
 
     let key = sync::Key::BoardAtEra(era_index, board_name.clone());
     let key_scores = sync::Key::BoardAtEra(era_index, format!("{}:scores", board_name));
+    let key_limits = sync::Key::BoardAtEra(era_index, format!("{}:limits", board_name));
 
     // Sometimes the board is still not available since it has been
     // requested at the same time and is still being generated. For these situations
@@ -236,8 +230,7 @@ pub async fn get_validator_rank(
     };
 
     // Get scores
-    // TODO: convert it to Vec<f64>
-    let scores = match redis::cmd("HGET")
+    let scores_str = match redis::cmd("HGET")
         .arg(key_scores.to_string())
         .arg(stash.to_string())
         .query_async(&mut conn as &mut Connection)
@@ -252,10 +245,30 @@ pub async fn get_validator_rank(
         }
     };
 
+    let scores_vec: Vec<&str> = scores_str.split(",").collect();
+    let scores: Vec<f64> = scores_vec
+        .iter()
+        .map(|x| x.parse::<f64>().unwrap_or_default())
+        .collect();
+
+    // Get limits
+    let limits: BoardLimits = redis::cmd("HGETALL")
+        .arg(key_limits.to_string())
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    if limits.len() == 0 {
+        let msg = format!("Limits not available for Leaderboard {:?}", &params.w);
+        error!("{}", msg);
+        return Err(ApiError::InternalServerError(msg));
+    }
+
     respond_json(ValidatorRankResponse {
         stash: stash.to_string(),
         rank: rank,
         scores: scores,
+        limits: limits.into(),
     })
 }
 
@@ -515,7 +528,7 @@ fn normalize_flag(flag: bool) -> f64 {
     (flag as u32) as f64
 }
 
-/// Normalize value between 0 - 100
+/// Normalize value between 0 - 1
 fn normalize_value(value: f64, min: f64, max: f64) -> f64 {
     if value == 0.0 {
         return 0.0;
@@ -593,20 +606,32 @@ async fn generate_board(
 ) -> Result<(), ApiError> {
     let mut conn = get_conn(&cache).await?;
 
-    let max_points_limit = calculate_avg_points(cache.clone(), sync::BOARD_MAX_POINTS_ERAS).await?;
-    let min_points_limit = calculate_avg_points(cache.clone(), sync::BOARD_MIN_POINTS_ERAS).await?;
-    let min_own_stake_limit =
-        calculate_min_limit(cache.clone(), sync::BOARD_OWN_STAKE_VALIDATORS).await?;
+    let mut limits: BTreeMap<String, f64> = BTreeMap::new();
+
+    let max_avg_points_limit =
+        calculate_avg_points(cache.clone(), sync::BOARD_MAX_POINTS_ERAS).await?;
+    limits.insert("max_avg_points_limit".to_string(), max_avg_points_limit);
+    let min_avg_points_limit =
+        calculate_avg_points(cache.clone(), sync::BOARD_MIN_POINTS_ERAS).await?;
+    limits.insert("min_avg_points_limit".to_string(), min_avg_points_limit);
     let max_own_stake_limit =
         calculate_max_limit(cache.clone(), sync::BOARD_OWN_STAKE_VALIDATORS).await?;
-    let min_judgements_limit =
-        calculate_min_limit(cache.clone(), sync::BOARD_JUDGEMENTS_VALIDATORS).await?;
+    limits.insert("max_own_stake_limit".to_string(), max_own_stake_limit);
+    let min_own_stake_limit =
+        calculate_min_limit(cache.clone(), sync::BOARD_OWN_STAKE_VALIDATORS).await?;
+    limits.insert("min_own_stake_limit".to_string(), min_own_stake_limit);
     let max_judgements_limit =
         calculate_max_limit(cache.clone(), sync::BOARD_JUDGEMENTS_VALIDATORS).await?;
-    let min_sub_accounts_limit =
-        calculate_min_limit(cache.clone(), sync::BOARD_SUB_ACCOUNTS_VALIDATORS).await?;
+    limits.insert("max_judgements_limit".to_string(), max_judgements_limit);
+    let min_judgements_limit =
+        calculate_min_limit(cache.clone(), sync::BOARD_JUDGEMENTS_VALIDATORS).await?;
+    limits.insert("min_judgements_limit".to_string(), min_judgements_limit);
     let max_sub_accounts_limit =
         calculate_max_limit(cache.clone(), sync::BOARD_SUB_ACCOUNTS_VALIDATORS).await?;
+    limits.insert("max_sub_accounts_limit".to_string(), max_sub_accounts_limit);
+    let min_sub_accounts_limit =
+        calculate_min_limit(cache.clone(), sync::BOARD_SUB_ACCOUNTS_VALIDATORS).await?;
+    limits.insert("min_sub_accounts_limit".to_string(), min_sub_accounts_limit);
 
     let stashes: Vec<String> = redis::cmd("ZRANGE")
         .arg(sync::Key::BoardAtEra(
@@ -623,6 +648,7 @@ async fn generate_board(
     let board_name = get_board_name(weights);
     let key = sync::Key::BoardAtEra(era_index, board_name.clone());
     let key_scores = sync::Key::BoardAtEra(era_index, format!("{}:scores", board_name));
+    let key_limits = sync::Key::BoardAtEra(era_index, format!("{}:limits", board_name));
     for stash in stashes {
         let stash = AccountId32::from_str(&*stash.to_string())?;
         let data: ValidatorCache = redis::cmd("HGETALL")
@@ -638,40 +664,40 @@ async fn generate_board(
             continue;
         }
 
-        let mut score_data: Vec<f64> = Vec::with_capacity(WEIGHTS_CAPACITY);
-        score_data.push(normalize_inclusion(validator.inclusion_rate) * weights[0] as f64);
-        score_data.push(reverse_normalize_commission(validator.commission) * weights[1] as f64);
-        score_data.push(
+        let mut scores: Vec<f64> = Vec::with_capacity(WEIGHTS_CAPACITY);
+        scores.push(normalize_inclusion(validator.inclusion_rate) * weights[0] as f64);
+        scores.push(reverse_normalize_commission(validator.commission) * weights[1] as f64);
+        scores.push(
             normalize_value(
                 validator.avg_reward_points,
-                min_points_limit,
-                max_points_limit,
+                min_avg_points_limit,
+                max_avg_points_limit,
             ) * weights[2] as f64,
         );
-        score_data.push(normalize_flag(validator.reward_staked) * weights[3] as f64);
-        score_data.push(normalize_flag(validator.active) * weights[4] as f64);
-        score_data.push(
+        scores.push(normalize_flag(validator.reward_staked) * weights[3] as f64);
+        scores.push(normalize_flag(validator.active) * weights[4] as f64);
+        scores.push(
             normalize_value(
                 validator.own_stake as f64,
                 min_own_stake_limit,
                 max_own_stake_limit,
             ) * weights[5] as f64,
         );
-        score_data.push(
+        scores.push(
             normalize_value(
                 validator.judgements as f64,
                 min_judgements_limit,
                 max_judgements_limit,
             ) * weights[6] as f64,
         );
-        score_data.push(
+        scores.push(
             reverse_normalize_value(
                 validator.sub_accounts as f64,
                 min_sub_accounts_limit,
                 max_sub_accounts_limit,
             ) * weights[7] as f64,
         );
-        let score = score_data.iter().fold(0.0, |acc, x| acc + x);
+        let score = scores.iter().fold(0.0, |acc, x| acc + x);
 
         // Cache total score
         let _: () = redis::cmd("ZADD")
@@ -682,15 +708,34 @@ async fn generate_board(
             .await
             .map_err(CacheError::RedisCMDError)?;
 
+        let scores_str: String = scores
+            .iter()
+            .enumerate()
+            .map(|(i, x)| {
+                if i == 0 {
+                    return x.to_string();
+                }
+                format!(",{}", x)
+            })
+            .collect();
+
         // Cache partial scores
         let _: () = redis::cmd("HSET")
             .arg(key_scores.to_string())
             .arg(stash.to_string())
-            .arg(format!("{:?}", score_data))
+            .arg(scores_str.to_string())
             .query_async(&mut conn as &mut Connection)
             .await
             .map_err(CacheError::RedisCMDError)?;
     }
+
+    // Cache board limits
+    let _: () = redis::cmd("HSET")
+        .arg(key_limits.to_string())
+        .arg(limits)
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
 
     Ok(())
 }
