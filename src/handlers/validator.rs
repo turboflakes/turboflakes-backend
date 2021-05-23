@@ -520,7 +520,7 @@ fn normalize_inclusion(inclusion_rate: f32) -> f64 {
 /// Reverse Normalize commission between 0 - 1
 /// lower commission the better
 fn reverse_normalize_commission(commission: u32) -> f64 {
-    1.0 - (commission / 1000000000) as f64
+    1.0 - (commission as f64 / 1000000000.0) as f64
 }
 
 /// Normalize boolean flag between 0 - 1
