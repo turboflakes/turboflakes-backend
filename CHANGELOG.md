@@ -151,3 +151,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Change
   
 - Fix cargo dependencies
+
+## [0.6.0] - 2021-05-23
+
+### Add
+  
+- Cache scores and limits
+- Add scores and limits to Rank endpoint response
