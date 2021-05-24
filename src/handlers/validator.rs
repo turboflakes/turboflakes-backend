@@ -186,8 +186,7 @@ pub async fn get_validator_rank(
 
     // Sometimes the board is still not available since it has been
     // requested at the same time and is still being generated. For these situations
-    // just wait and try again.
-    // If it fails after 10 attempts return error.
+    // just wait and try again every second until its done or a amximum of 60sec
     let mut i = 0;
     while let redis::Value::Int(0) = redis::cmd("EXISTS")
         .arg(key.clone())
@@ -195,7 +194,7 @@ pub async fn get_validator_rank(
         .await
         .map_err(CacheError::RedisCMDError)?
     {
-        if i == 10 {
+        if i == 60 {
             let msg = format!("The Leaderboard is still being generated. The rank for stash {} is not yet available.", stash);
             error!("{}", msg);
             return Err(ApiError::NotFound(msg));
@@ -229,6 +228,28 @@ pub async fn get_validator_rank(
         }
     };
 
+    // Check if scores key is already available
+    let mut i = 0;
+    while let redis::Value::Int(0) = redis::cmd("HEXISTS")
+        .arg(key_scores.to_string())
+        .arg(stash.to_string())
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?
+    {
+        if i == 60 {
+            let msg = format!("The Leaderboard is still being generated. The scores for stash {} are not yet available.", stash);
+            error!("{}", msg);
+            return Err(ApiError::NotFound(msg));
+        }
+        let msg = format!(
+            "The scores for stash {} are not yet available. Wait a second and try again.",
+            stash
+        );
+        warn!("{}", msg);
+        thread::sleep(time::Duration::from_secs(1));
+        i += 1;
+    }
     // Get scores
     let scores_str = match redis::cmd("HGET")
         .arg(key_scores.to_string())
@@ -250,6 +271,28 @@ pub async fn get_validator_rank(
         .iter()
         .map(|x| x.parse::<f64>().unwrap_or_default())
         .collect();
+
+    // Check if limits key is already available
+    let mut i = 0;
+    while let redis::Value::Int(0) = redis::cmd("EXISTS")
+        .arg(key_limits.to_string())
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?
+    {
+        if i == 60 {
+            let msg = format!("The Leaderboard is still being generated. The limits for stash {} are not yet available.", stash);
+            error!("{}", msg);
+            return Err(ApiError::NotFound(msg));
+        }
+        let msg = format!(
+            "The limits for stash {} are not yet available. Wait a second and try again.",
+            stash
+        );
+        warn!("{}", msg);
+        thread::sleep(time::Duration::from_secs(1));
+        i += 1;
+    }
 
     // Get limits
     let limits: BoardLimits = redis::cmd("HGETALL")
