@@ -53,6 +53,7 @@ pub const BOARD_TOTAL_POINTS_ERAS: &'static str = "total:points:era";
 pub const BOARD_MAX_POINTS_ERAS: &'static str = "max:points:era";
 pub const BOARD_MIN_POINTS_ERAS: &'static str = "min:points:era";
 pub const BOARD_OWN_STAKE_VALIDATORS: &'static str = "own:stake:val";
+pub const BOARD_TOTAL_STAKE_VALIDATORS: &'static str = "total:stake:val";
 pub const BOARD_JUDGEMENTS_VALIDATORS: &'static str = "judgements:val";
 pub const BOARD_SUB_ACCOUNTS_VALIDATORS: &'static str = "sub:accounts:val";
 
@@ -528,18 +529,40 @@ impl Sync {
             .query_async(&mut conn as &mut Connection)
             .await
             .map_err(CacheError::RedisCMDError)?;
-          let mut value = match res {
+          let mut nominators_stake = match res {
             Some(value) => value.parse::<u128>().unwrap_or_default(),
             None => 0,
           };
-          value += nominator_stake;
+          nominators_stake += nominator_stake;
           let _: () = redis::cmd("HSET")
             .arg(Key::Validator(validator_stash.clone()))
             .arg("nominators_stake")
-            .arg(value.to_string())
+            .arg(nominators_stake.to_string())
             .query_async(&mut conn as &mut Connection)
             .await
             .map_err(CacheError::RedisCMDError)?;
+
+          // Calculate the validator total stake and add it to the board
+          let res: Option<String> = redis::cmd("HGET")
+            .arg(Key::Validator(validator_stash.clone()))
+            .arg("own_stake")
+            .query_async(&mut conn as &mut Connection)
+            .await
+            .map_err(CacheError::RedisCMDError)?;
+          let mut total_stake = match res {
+            Some(own_stake) => own_stake.parse::<u128>().unwrap_or_default(),
+            None => 0,
+          };
+          total_stake += nominators_stake;
+          if total_stake != 0 {
+            let _: () = redis::cmd("ZADD")
+              .arg(Key::BoardAtEra(0, BOARD_TOTAL_STAKE_VALIDATORS.to_string()))
+              .arg(total_stake.to_string()) // score
+              .arg(validator_stash.to_string()) // member
+              .query_async(&mut conn as &mut Connection)
+              .await
+              .map_err(CacheError::RedisCMDError)?;
+          }
         }
       }
       i += 1;
