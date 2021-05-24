@@ -195,6 +195,10 @@ impl Sync {
         match EraPayoutEvent::<DefaultNodeRuntime>::decode(&mut &raw_event.data[..]) {
           Ok(event) => {
             info!("Successfully decoded event {:?}", event);
+            if self.is_syncing().await? {
+              warn!("System is syncing skip event event {:?}", event);
+              continue;
+            }
             self.status(Status::Started).await?;
             self.active_era().await?;
             self.eras_history(event.era_index, Some(true)).await?;
@@ -229,6 +233,10 @@ impl Sync {
         match NewSessionEvent::<DefaultNodeRuntime>::decode(&mut &raw_event.data[..]) {
           Ok(event) => {
             info!("Successfully decoded event {:?}", event);
+            if self.is_syncing().await? {
+              warn!("System is syncing skip event event {:?}", event);
+              continue;
+            }
             self.status(Status::Started).await?;
             self.validators().await?;
             self.nominators().await?;
@@ -307,6 +315,26 @@ impl Sync {
       .map_err(CacheError::RedisCMDError)?;
 
     Ok(())
+  }
+
+  async fn is_syncing(&self) -> Result<bool, SyncError> {
+    let mut conn = self
+      .cache_pool
+      .get()
+      .await
+      .map_err(CacheError::RedisPoolError)?;
+
+    let res: Option<String> = redis::cmd("HGET")
+      .arg(Key::Info)
+      .arg("syncing")
+      .query_async(&mut conn as &mut Connection)
+      .await
+      .map_err(CacheError::RedisCMDError)?;
+    let syncing = match res {
+      Some(v) => v.parse::<bool>().unwrap_or_default(),
+      None => false,
+    };
+    Ok(syncing)
   }
 
   /// Sync all validators currently available
