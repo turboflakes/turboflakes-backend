@@ -724,11 +724,8 @@ async fn generate_board(
         scores.push(normalize_inclusion(validator.inclusion_rate) * weights[0] as f64);
         scores.push(reverse_normalize_commission(validator.commission) * weights[1] as f64);
         scores.push(
-            normalize_value(
-                validator.nominators as f64,
-                0.0,
-                MAX_NOMINATORS as f64,
-            ) * weights[2] as f64,
+            reverse_normalize_value(validator.nominators as f64, 0.0, MAX_NOMINATORS as f64)
+                * weights[2] as f64,
         );
         scores.push(
             normalize_value(
