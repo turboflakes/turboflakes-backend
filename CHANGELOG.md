@@ -181,3 +181,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Add
 
 - Include nominations and total stake to the score calculation
+
+## [0.7.1] - 2021-05-25
+
+### Change
+  
+- Fix nominations score by reverse normalization value
