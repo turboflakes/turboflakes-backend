@@ -476,6 +476,8 @@ impl std::fmt::Display for Queries {
     }
 }
 
+const MAX_NOMINATORS: i32 = 256;
+
 /// Weight can be any value in a 10-point scale. Higher the weight more important
 /// is the criteria to the user
 type Weight = u32;
@@ -484,16 +486,18 @@ type Weight = u32;
 /// the weight for the respective criteria
 /// Position 0 - Higher Inclusion rate is preferrable
 /// Position 1 - Lower Commission is preferrable
-/// Position 2 - Higher Reward Points is preferrable
-/// Position 3 - If reward is staked is preferrable
-/// Position 4 - If in active set is preferrable
-/// Position 5 - Higher own stake is preferrable
-/// Position 6 - Higher number of Reasonable or KnownGood judgements is preferrable
-/// Position 7 - Lower number of sub-accounts is preferrable
+/// Position 2 - Lower Nominators is preferrable (limit to 256 -> oversubscribed)
+/// Position 3 - Higher Reward Points is preferrable
+/// Position 4 - If reward is staked is preferrable
+/// Position 5 - If in active set is preferrable
+/// Position 6 - Higher own stake is preferrable
+/// Position 7 - Lower total stake is preferrable
+/// Position 8 - Higher number of Reasonable or KnownGood judgements is preferrable
+/// Position 9 - Lower number of sub-accounts is preferrable
 type Weights = Vec<Weight>;
 
 /// Current weighs capacity
-const WEIGHTS_CAPACITY: usize = 8;
+const WEIGHTS_CAPACITY: usize = 10;
 
 // Number of elements to return
 type Quantity = u32;
@@ -573,8 +577,11 @@ fn normalize_flag(flag: bool) -> f64 {
 
 /// Normalize value between 0 - 1
 fn normalize_value(value: f64, min: f64, max: f64) -> f64 {
-    if value == 0.0 {
+    if value == 0.0 || value < min {
         return 0.0;
+    }
+    if value > max {
+        return 1.0;
     }
     (value - min) / (max - min)
 }
@@ -663,6 +670,12 @@ async fn generate_board(
     let min_own_stake_limit =
         calculate_min_limit(cache.clone(), sync::BOARD_OWN_STAKE_VALIDATORS).await?;
     limits.insert("min_own_stake_limit".to_string(), min_own_stake_limit);
+    let max_total_stake_limit =
+        calculate_max_limit(cache.clone(), sync::BOARD_TOTAL_STAKE_VALIDATORS).await?;
+    limits.insert("max_total_stake_limit".to_string(), max_total_stake_limit);
+    let min_total_stake_limit =
+        calculate_min_limit(cache.clone(), sync::BOARD_TOTAL_STAKE_VALIDATORS).await?;
+    limits.insert("min_total_stake_limit".to_string(), min_total_stake_limit);
     let max_judgements_limit =
         calculate_max_limit(cache.clone(), sync::BOARD_JUDGEMENTS_VALIDATORS).await?;
     limits.insert("max_judgements_limit".to_string(), max_judgements_limit);
@@ -712,33 +725,47 @@ async fn generate_board(
         scores.push(reverse_normalize_commission(validator.commission) * weights[1] as f64);
         scores.push(
             normalize_value(
+                validator.nominators as f64,
+                0.0,
+                MAX_NOMINATORS as f64,
+            ) * weights[2] as f64,
+        );
+        scores.push(
+            normalize_value(
                 validator.avg_reward_points,
                 min_avg_points_limit,
                 max_avg_points_limit,
-            ) * weights[2] as f64,
+            ) * weights[3] as f64,
         );
-        scores.push(normalize_flag(validator.reward_staked) * weights[3] as f64);
-        scores.push(normalize_flag(validator.active) * weights[4] as f64);
+        scores.push(normalize_flag(validator.reward_staked) * weights[4] as f64);
+        scores.push(normalize_flag(validator.active) * weights[5] as f64);
         scores.push(
             normalize_value(
                 validator.own_stake as f64,
                 min_own_stake_limit,
                 max_own_stake_limit,
-            ) * weights[5] as f64,
+            ) * weights[6] as f64,
+        );
+        scores.push(
+            reverse_normalize_value(
+                (validator.own_stake + validator.nominators_stake) as f64,
+                min_total_stake_limit,
+                max_total_stake_limit,
+            ) * weights[7] as f64,
         );
         scores.push(
             normalize_value(
                 validator.judgements as f64,
                 min_judgements_limit,
                 max_judgements_limit,
-            ) * weights[6] as f64,
+            ) * weights[8] as f64,
         );
         scores.push(
             reverse_normalize_value(
                 validator.sub_accounts as f64,
                 min_sub_accounts_limit,
                 max_sub_accounts_limit,
-            ) * weights[7] as f64,
+            ) * weights[9] as f64,
         );
         let score = scores.iter().fold(0.0, |acc, x| acc + x);
 
