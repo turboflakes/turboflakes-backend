@@ -29,7 +29,7 @@ use std::time::Duration;
 
 const CACHE_POOL_MAX_OPEN: u64 = 20;
 const CACHE_POOL_MAX_IDLE: u64 = 8;
-const CACHE_POOL_TIMEOUT_SECONDS: u64 = 1;
+const CACHE_POOL_TIMEOUT_SECONDS: u64 = 30;
 const CACHE_POOL_EXPIRE_SECONDS: u64 = 60;
 
 pub type RedisPool = Pool<RedisConnectionManager>;
