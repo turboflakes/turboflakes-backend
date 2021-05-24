@@ -164,3 +164,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Change
   
 - Fix commission score
+
+## [0.6.2] - 2021-05-25
+
+### Change
+  
+- Fix cache timeout
+- Check if cache keys are available in rank endpoint
