@@ -165,9 +165,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   
 - Fix commission score
 
-## [0.6.2] - 2021-05-25
+## [0.6.2] - 2021-05-24
 
 ### Change
   
 - Fix cache timeout
 - Check if cache keys are available in rank endpoint
+
+## [0.7.0] - 2021-05-24
+
+### Change
+  
+- Fix do not process new events if cache is syncing
+
+### Add
+
+- Include nominations and total stake to the score calculation
