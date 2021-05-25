@@ -199,3 +199,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Change
   
 - To optimize the scores use 95% confidence interval calculation to obtain the maximum and minimum during normalization
+
+## [0.7.6] - 2021-05-25
+
+### Change
+  
+- Revert and just use the maximun and minimum to calculate the partial scores.
