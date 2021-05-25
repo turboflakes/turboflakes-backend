@@ -617,7 +617,10 @@ async fn calculate_avg_points(cache: Data<RedisPool>, name: &str) -> Result<f64,
     Ok(avg)
 }
 
-async fn calculate_confidence_interval_95(cache: Data<RedisPool>, name: &str) -> Result<(f64, f64), ApiError> {
+async fn calculate_confidence_interval_95(
+    cache: Data<RedisPool>,
+    name: &str,
+) -> Result<(f64, f64), ApiError> {
     let mut conn = get_conn(&cache).await?;
     let v: Vec<(String, f64)> = redis::cmd("ZRANGE")
         .arg(sync::Key::BoardAtEra(0, name.to_string()))
@@ -629,13 +632,21 @@ async fn calculate_confidence_interval_95(cache: Data<RedisPool>, name: &str) ->
         .await
         .map_err(CacheError::RedisCMDError)?;
     // Convert Vec<(EraIndex, u32)> to Vec<u32> to easily make the calculation
-    let scores: Vec<f64> = v.into_iter().map(|(_, score)| score ).collect();
+    let scores: Vec<f64> = v.into_iter().map(|(_, score)| score).collect();
     let min_max = stats::confidence_interval_95(&scores);
     Ok(min_max)
 }
 
-// DEPRECATED: Use calculate_confidence_interval_95
-async fn _calculate_min_limit(cache: Data<RedisPool>, name: &str) -> Result<f64, ApiError> {
+async fn calculate_min_max_interval(
+    cache: Data<RedisPool>,
+    name: &str,
+) -> Result<(f64, f64), ApiError> {
+    let max = calculate_max_limit(cache.clone(), name).await?;
+    let min = calculate_min_limit(cache.clone(), name).await?;
+    Ok((min, max))
+}
+
+async fn calculate_min_limit(cache: Data<RedisPool>, name: &str) -> Result<f64, ApiError> {
     let mut conn = get_conn(&cache).await?;
     let v: Vec<(String, f64)> = redis::cmd("ZRANGE")
         .arg(sync::Key::BoardAtEra(0, name.to_string()))
@@ -655,8 +666,7 @@ async fn _calculate_min_limit(cache: Data<RedisPool>, name: &str) -> Result<f64,
     Ok(v[0].1)
 }
 
-// DEPRECATED: Use calculate_confidence_interval_95
-async fn _calculate_max_limit(cache: Data<RedisPool>, name: &str) -> Result<f64, ApiError> {
+async fn calculate_max_limit(cache: Data<RedisPool>, name: &str) -> Result<f64, ApiError> {
     let mut conn = get_conn(&cache).await?;
     let v: Vec<(String, f64)> = redis::cmd("ZRANGE")
         .arg(sync::Key::BoardAtEra(0, name.to_string()))
@@ -693,21 +703,35 @@ async fn generate_board(
         calculate_avg_points(cache.clone(), sync::BOARD_MIN_POINTS_ERAS).await?;
     limits.insert("min_avg_points_limit".to_string(), min_avg_points_limit);
 
-    let own_stake_interval = calculate_confidence_interval_95(cache.clone(), sync::BOARD_OWN_STAKE_VALIDATORS).await?;
+    let own_stake_interval =
+        calculate_min_max_interval(cache.clone(), sync::BOARD_OWN_STAKE_VALIDATORS).await?;
+    // let own_stake_interval = calculate_confidence_interval_95(cache.clone(), sync::BOARD_OWN_STAKE_VALIDATORS).await?;
     limits.insert("min_own_stake_limit".to_string(), own_stake_interval.0);
     limits.insert("max_own_stake_limit".to_string(), own_stake_interval.1);
-    
-    let total_stake_interval = calculate_confidence_interval_95(cache.clone(), sync::BOARD_TOTAL_STAKE_VALIDATORS).await?;
+
+    let total_stake_interval =
+        calculate_min_max_interval(cache.clone(), sync::BOARD_TOTAL_STAKE_VALIDATORS).await?;
+    // let total_stake_interval = calculate_confidence_interval_95(cache.clone(), sync::BOARD_TOTAL_STAKE_VALIDATORS).await?;
     limits.insert("min_total_stake_limit".to_string(), total_stake_interval.0);
     limits.insert("max_total_stake_limit".to_string(), total_stake_interval.1);
 
-    let judgements_interval = calculate_confidence_interval_95(cache.clone(), sync::BOARD_JUDGEMENTS_VALIDATORS).await?;
+    let judgements_interval =
+        calculate_min_max_interval(cache.clone(), sync::BOARD_JUDGEMENTS_VALIDATORS).await?;
+    // let judgements_interval = calculate_confidence_interval_95(cache.clone(), sync::BOARD_JUDGEMENTS_VALIDATORS).await?;
     limits.insert("min_judgements_limit".to_string(), judgements_interval.0);
     limits.insert("max_judgements_limit".to_string(), judgements_interval.1);
 
-    let sub_accounts_interval = calculate_confidence_interval_95(cache.clone(), sync::BOARD_SUB_ACCOUNTS_VALIDATORS).await?;
-    limits.insert("min_sub_accounts_limit".to_string(), sub_accounts_interval.0);
-    limits.insert("max_sub_accounts_limit".to_string(), sub_accounts_interval.1);
+    let sub_accounts_interval =
+        calculate_min_max_interval(cache.clone(), sync::BOARD_SUB_ACCOUNTS_VALIDATORS).await?;
+    // let sub_accounts_interval = calculate_confidence_interval_95(cache.clone(), sync::BOARD_SUB_ACCOUNTS_VALIDATORS).await?;
+    limits.insert(
+        "min_sub_accounts_limit".to_string(),
+        sub_accounts_interval.0,
+    );
+    limits.insert(
+        "max_sub_accounts_limit".to_string(),
+        sub_accounts_interval.1,
+    );
 
     let stashes: Vec<String> = redis::cmd("ZRANGE")
         .arg(sync::Key::BoardAtEra(
@@ -880,8 +904,10 @@ pub async fn get_validators(
             return Err(ApiError::NotFound(msg));
         }
         // Generate and cache leaderboard
-        generate_board(era_index, &params.w, cache).await?;
+        // generate_board(era_index, &params.w, cache).await?;
     }
+
+    generate_board(era_index, &params.w, cache).await?;
 
     // Increase board stats counter
     let _: () = redis::cmd("HINCRBY")
