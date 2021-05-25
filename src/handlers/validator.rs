@@ -704,7 +704,16 @@ async fn generate_board(
     let board_name = get_board_name(weights);
     let key = sync::Key::BoardAtEra(era_index, board_name.clone());
     let key_scores = sync::Key::BoardAtEra(era_index, format!("{}:scores", board_name));
-    let key_limits = sync::Key::BoardAtEra(era_index, format!("{}:limits", board_name));
+    let key_limits = sync::Key::BoardAtEra(era_index, format!("{}:limits", board_name)); 
+    
+    // Cache board limits
+    let _: () = redis::cmd("HSET")
+        .arg(key_limits.to_string())
+        .arg(limits)
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+        
     for stash in stashes {
         let stash = AccountId32::from_str(&*stash.to_string())?;
         let data: ValidatorCache = redis::cmd("HGETALL")
@@ -795,14 +804,6 @@ async fn generate_board(
             .await
             .map_err(CacheError::RedisCMDError)?;
     }
-
-    // Cache board limits
-    let _: () = redis::cmd("HSET")
-        .arg(key_limits.to_string())
-        .arg(limits)
-        .query_async(&mut conn as &mut Connection)
-        .await
-        .map_err(CacheError::RedisCMDError)?;
 
     Ok(())
 }
