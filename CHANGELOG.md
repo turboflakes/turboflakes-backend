@@ -193,3 +193,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Change
   
 - Fix validator rank response. Send status information
+
+## [0.7.4] - 2021-05-25
+
+### Change
+  
+- To optimize the scores use 95% confidence interval calculation to obtain the maximum and minimum during normalization

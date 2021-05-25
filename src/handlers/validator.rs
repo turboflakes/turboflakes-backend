@@ -27,7 +27,7 @@ use actix_web::web::{Data, Json, Path, Query};
 use log::{error, warn};
 use redis::aio::Connection;
 use serde::{de::Deserializer, Deserialize, Serialize};
-use std::{collections::BTreeMap, str::FromStr, thread, time};
+use std::{collections::BTreeMap, str::FromStr};
 use substrate_subxt::{sp_runtime::AccountId32, staking::EraIndex};
 
 type ValidatorCache = BTreeMap<String, String>;
@@ -617,7 +617,25 @@ async fn calculate_avg_points(cache: Data<RedisPool>, name: &str) -> Result<f64,
     Ok(avg)
 }
 
-async fn calculate_min_limit(cache: Data<RedisPool>, name: &str) -> Result<f64, ApiError> {
+async fn calculate_confidence_interval_95(cache: Data<RedisPool>, name: &str) -> Result<(f64, f64), ApiError> {
+    let mut conn = get_conn(&cache).await?;
+    let v: Vec<(String, u128)> = redis::cmd("ZRANGE")
+        .arg(sync::Key::BoardAtEra(0, name.to_string()))
+        .arg("-inf")
+        .arg("+inf")
+        .arg("BYSCORE")
+        .arg("WITHSCORES")
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+    // Convert Vec<(EraIndex, u32)> to Vec<u32> to easily make the calculation
+    let scores: Vec<u128> = v.into_iter().map(|(_, score)| score ).collect();
+    let min_max = stats::confidence_interval_95(&scores);
+    Ok(min_max)
+}
+
+// DEPRECATED: Use calculate_confidence_interval_95
+async fn _calculate_min_limit(cache: Data<RedisPool>, name: &str) -> Result<f64, ApiError> {
     let mut conn = get_conn(&cache).await?;
     let v: Vec<(String, f64)> = redis::cmd("ZRANGE")
         .arg(sync::Key::BoardAtEra(0, name.to_string()))
@@ -637,7 +655,8 @@ async fn calculate_min_limit(cache: Data<RedisPool>, name: &str) -> Result<f64, 
     Ok(v[0].1)
 }
 
-async fn calculate_max_limit(cache: Data<RedisPool>, name: &str) -> Result<f64, ApiError> {
+// DEPRECATED: Use calculate_confidence_interval_95
+async fn _calculate_max_limit(cache: Data<RedisPool>, name: &str) -> Result<f64, ApiError> {
     let mut conn = get_conn(&cache).await?;
     let v: Vec<(String, f64)> = redis::cmd("ZRANGE")
         .arg(sync::Key::BoardAtEra(0, name.to_string()))
@@ -673,30 +692,22 @@ async fn generate_board(
     let min_avg_points_limit =
         calculate_avg_points(cache.clone(), sync::BOARD_MIN_POINTS_ERAS).await?;
     limits.insert("min_avg_points_limit".to_string(), min_avg_points_limit);
-    let max_own_stake_limit =
-        calculate_max_limit(cache.clone(), sync::BOARD_OWN_STAKE_VALIDATORS).await?;
-    limits.insert("max_own_stake_limit".to_string(), max_own_stake_limit);
-    let min_own_stake_limit =
-        calculate_min_limit(cache.clone(), sync::BOARD_OWN_STAKE_VALIDATORS).await?;
-    limits.insert("min_own_stake_limit".to_string(), min_own_stake_limit);
-    let max_total_stake_limit =
-        calculate_max_limit(cache.clone(), sync::BOARD_TOTAL_STAKE_VALIDATORS).await?;
-    limits.insert("max_total_stake_limit".to_string(), max_total_stake_limit);
-    let min_total_stake_limit =
-        calculate_min_limit(cache.clone(), sync::BOARD_TOTAL_STAKE_VALIDATORS).await?;
-    limits.insert("min_total_stake_limit".to_string(), min_total_stake_limit);
-    let max_judgements_limit =
-        calculate_max_limit(cache.clone(), sync::BOARD_JUDGEMENTS_VALIDATORS).await?;
-    limits.insert("max_judgements_limit".to_string(), max_judgements_limit);
-    let min_judgements_limit =
-        calculate_min_limit(cache.clone(), sync::BOARD_JUDGEMENTS_VALIDATORS).await?;
-    limits.insert("min_judgements_limit".to_string(), min_judgements_limit);
-    let max_sub_accounts_limit =
-        calculate_max_limit(cache.clone(), sync::BOARD_SUB_ACCOUNTS_VALIDATORS).await?;
-    limits.insert("max_sub_accounts_limit".to_string(), max_sub_accounts_limit);
-    let min_sub_accounts_limit =
-        calculate_min_limit(cache.clone(), sync::BOARD_SUB_ACCOUNTS_VALIDATORS).await?;
-    limits.insert("min_sub_accounts_limit".to_string(), min_sub_accounts_limit);
+
+    let own_stake_interval = calculate_confidence_interval_95(cache.clone(), sync::BOARD_OWN_STAKE_VALIDATORS).await?;
+    limits.insert("min_own_stake_limit".to_string(), own_stake_interval.0);
+    limits.insert("max_own_stake_limit".to_string(), own_stake_interval.1);
+    
+    let total_stake_interval = calculate_confidence_interval_95(cache.clone(), sync::BOARD_TOTAL_STAKE_VALIDATORS).await?;
+    limits.insert("min_total_stake_limit".to_string(), total_stake_interval.0);
+    limits.insert("max_total_stake_limit".to_string(), total_stake_interval.1);
+
+    let judgements_interval = calculate_confidence_interval_95(cache.clone(), sync::BOARD_JUDGEMENTS_VALIDATORS).await?;
+    limits.insert("min_judgements_limit".to_string(), judgements_interval.0);
+    limits.insert("max_judgements_limit".to_string(), judgements_interval.1);
+
+    let sub_accounts_interval = calculate_confidence_interval_95(cache.clone(), sync::BOARD_SUB_ACCOUNTS_VALIDATORS).await?;
+    limits.insert("min_sub_accounts_limit".to_string(), sub_accounts_interval.0);
+    limits.insert("max_sub_accounts_limit".to_string(), sub_accounts_interval.1);
 
     let stashes: Vec<String> = redis::cmd("ZRANGE")
         .arg(sync::Key::BoardAtEra(
@@ -756,29 +767,29 @@ async fn generate_board(
         scores.push(
             normalize_value(
                 validator.own_stake as f64,
-                min_own_stake_limit,
-                max_own_stake_limit,
+                own_stake_interval.0,
+                own_stake_interval.1,
             ) * weights[6] as f64,
         );
         scores.push(
             reverse_normalize_value(
                 (validator.own_stake + validator.nominators_stake) as f64,
-                min_total_stake_limit,
-                max_total_stake_limit,
+                total_stake_interval.0,
+                total_stake_interval.1,
             ) * weights[7] as f64,
         );
         scores.push(
             normalize_value(
                 validator.judgements as f64,
-                min_judgements_limit,
-                max_judgements_limit,
+                judgements_interval.0,
+                judgements_interval.1,
             ) * weights[8] as f64,
         );
         scores.push(
             reverse_normalize_value(
                 validator.sub_accounts as f64,
-                min_sub_accounts_limit,
-                max_sub_accounts_limit,
+                sub_accounts_interval.0,
+                sub_accounts_interval.1,
             ) * weights[9] as f64,
         );
         let score = scores.iter().fold(0.0, |acc, x| acc + x);
