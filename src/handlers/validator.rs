@@ -904,10 +904,8 @@ pub async fn get_validators(
             return Err(ApiError::NotFound(msg));
         }
         // Generate and cache leaderboard
-        // generate_board(era_index, &params.w, cache).await?;
+        generate_board(era_index, &params.w, cache).await?;
     }
-
-    generate_board(era_index, &params.w, cache).await?;
 
     // Increase board stats counter
     let _: () = redis::cmd("HINCRBY")
