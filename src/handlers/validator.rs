@@ -619,7 +619,7 @@ async fn calculate_avg_points(cache: Data<RedisPool>, name: &str) -> Result<f64,
 
 async fn calculate_confidence_interval_95(cache: Data<RedisPool>, name: &str) -> Result<(f64, f64), ApiError> {
     let mut conn = get_conn(&cache).await?;
-    let v: Vec<(String, u128)> = redis::cmd("ZRANGE")
+    let v: Vec<(String, f64)> = redis::cmd("ZRANGE")
         .arg(sync::Key::BoardAtEra(0, name.to_string()))
         .arg("-inf")
         .arg("+inf")
@@ -629,7 +629,7 @@ async fn calculate_confidence_interval_95(cache: Data<RedisPool>, name: &str) ->
         .await
         .map_err(CacheError::RedisCMDError)?;
     // Convert Vec<(EraIndex, u32)> to Vec<u32> to easily make the calculation
-    let scores: Vec<u128> = v.into_iter().map(|(_, score)| score ).collect();
+    let scores: Vec<f64> = v.into_iter().map(|(_, score)| score ).collect();
     let min_max = stats::confidence_interval_95(&scores);
     Ok(min_max)
 }

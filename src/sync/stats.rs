@@ -66,8 +66,8 @@ pub fn max(list: &Vec<u32>) -> u32 {
   }
 }
 
-pub fn standard_deviation(list: &Vec<u128>) -> f64 {
-  let m = mean_u128(list);
+pub fn standard_deviation(list: &Vec<f64>) -> f64 {
+  let m = mean_f64(list);
   let mut variance: Vec<f64> = list
     .iter()
     .map(|&score| (score as f64 - m).powf(2.0))
@@ -77,8 +77,8 @@ pub fn standard_deviation(list: &Vec<u128>) -> f64 {
 
 // Calculate 95% confidence interval
 // https://www.mathsisfun.com/data/confidence-interval.html
-pub fn confidence_interval_95(list: &Vec<u128>) -> (f64, f64) {
-  let m = mean_u128(list);
+pub fn confidence_interval_95(list: &Vec<f64>) -> (f64, f64) {
+  let m = mean_f64(list);
   let sd = standard_deviation(list);
   let v = 1.96 * (sd / ((list.len() as f64).sqrt()));
   (m - v, m + v)
@@ -120,13 +120,13 @@ mod tests {
 
   #[test]
   fn calculate_standard_deviation() {
-    let mut v = vec![600, 470, 170, 430, 300];
+    let mut v = vec![600.0, 470.0, 170.0, 430.0, 300.0];
     assert_eq!(standard_deviation(&mut v), 147.32277488562318);
   }
   #[test]
   fn calculate_confidence_interval_95() {
-    let mut v = vec![600, 470, 170, 430, 300];
+    let mut v = vec![600.0, 470.0, 170.0, 430.0, 300.0];
     assert_eq!(confidence_interval_95(&mut v), (264.86589420296434, 523.1341057970357));
   }
-  
+
 }
