@@ -507,7 +507,7 @@ impl Sync {
             .map_err(CacheError::RedisCMDError)?;
 
           if !exists {
-            warn!(
+            debug!(
               "Skipping validator with stash {} -> no longer available",
               validator_stash
             );
@@ -787,6 +787,7 @@ impl Sync {
       .map_err(CacheError::RedisPoolError)?;
 
     if let Some(true) = force {
+      info!("Starting era {} history sync", era_index);
       self.eras_validator_reward(era_index).await?;
       self.eras_total_stake(era_index).await?;
       self.eras_reward_points(era_index).await?;
@@ -796,7 +797,7 @@ impl Sync {
         .query_async(&mut conn as &mut Connection)
         .await
         .map_err(CacheError::RedisCMDError)?;
-      info!("Successfully synced history in era {}", era_index);
+      info!("Successfully synced era {} history", era_index);
 
       return Ok(());
     }
