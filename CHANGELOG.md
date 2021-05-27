@@ -211,3 +211,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Change
   
 - Fix uncomment generate board
+
+## [0.7.8] - 2021-05-27
+
+### Change
+  
+- Review log messages
