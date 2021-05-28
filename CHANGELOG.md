@@ -217,3 +217,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Change
   
 - Review log messages
+
+## [0.7.9] - 2021-05-29
+
+### Change
+  
+- Fix event subscription related to substrate-subxt dependencies
