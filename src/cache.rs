@@ -1,16 +1,16 @@
 // The MIT License (MIT)
 // Copyright © 2021 Aukbit Ltd.
-// 
+//
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
 // in the Software without restriction, including without limitation the rights
 // to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
 // copies of the Software, and to permit persons to whom the Software is
 // furnished to do so, subject to the following conditions:
-// 
+//
 // The above copyright notice and this permission notice shall be included in all
 // copies or substantial portions of the Software.
-// 
+//
 // THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 // IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 // FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -20,12 +20,14 @@
 // SOFTWARE.
 
 use crate::config::{Config, CONFIG};
-use crate::errors::{CacheError};
+use crate::errors::CacheError;
 
 use actix_web::web;
+use log::{error, info};
 use mobc::{Connection, Pool};
 use mobc_redis::RedisConnectionManager;
 use std::time::Duration;
+use std::{thread, time};
 
 const CACHE_POOL_MAX_OPEN: u64 = 20;
 const CACHE_POOL_MAX_IDLE: u64 = 8;
@@ -57,14 +59,24 @@ pub fn create_pool(config: Config) -> Result<RedisPool, CacheError> {
   )
 }
 
+pub fn create_or_await_pool(config: Config) -> RedisPool {
+  loop {
+    match create_pool(config.clone()) {
+      Ok(pool) => break pool,
+      Err(e) => {
+        error!("{}", e);
+        info!("Awaiting for Redis to be ready");
+        thread::sleep(time::Duration::from_secs(6));
+      }
+    }
+  }
+}
+
 pub fn add_pool(cfg: &mut web::ServiceConfig) {
   let pool = create_pool(CONFIG.clone()).expect("failed to create Redis pool");
   cfg.data(pool);
 }
 
 pub async fn get_conn(pool: &RedisPool) -> Result<RedisConn, CacheError> {
-  pool
-    .get()
-    .await
-    .map_err(CacheError::RedisPoolError)
+  pool.get().await.map_err(CacheError::RedisPoolError)
 }

@@ -19,7 +19,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::cache::{create_pool, RedisPool};
+use crate::cache::{create_or_await_pool, RedisPool};
 use crate::config::{Config, CONFIG};
 use crate::errors::{CacheError, SyncError};
 use crate::sync::stats::{max, mean, median, min};
@@ -65,6 +65,19 @@ pub async fn create_substrate_node_client(
     .skip_type_sizes_check()
     .build()
     .await
+}
+
+pub async fn create_or_await_substrate_node_client(config: Config) -> Client<DefaultNodeRuntime> {
+  loop {
+    match create_substrate_node_client(config.clone()).await {
+      Ok(client) => break client,
+      Err(e) => {
+        error!("{}", e);
+        info!("Awaiting for Substrate node client to be ready");
+        thread::sleep(time::Duration::from_secs(6));
+      }
+    }
+  }
 }
 
 fn get_account_id_from_storage_key(key: StorageKey) -> AccountId32 {
@@ -125,13 +138,9 @@ pub struct Sync {
 
 impl Sync {
   pub async fn new() -> Sync {
-    let cache_pool = create_pool(CONFIG.clone()).expect("failed to create Redis pool");
-    let node_client = create_substrate_node_client(CONFIG.clone())
-      .await
-      .expect("failed to get substrate node connection");
     Sync {
-      cache_pool: cache_pool,
-      node_client: node_client,
+      cache_pool: create_or_await_pool(CONFIG.clone()),
+      node_client: create_or_await_substrate_node_client(CONFIG.clone()).await,
     }
   }
 
