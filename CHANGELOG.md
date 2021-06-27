@@ -229,3 +229,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Change
   
 - Fix create or await for substrate client to be ready when setting connection
+
+## [0.7.11] - 2021-05-30
+
+### Change
+  
+- Update substrate dependencies
