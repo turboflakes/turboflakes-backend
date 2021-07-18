@@ -47,11 +47,12 @@ use substrate_subxt::{
   Client, ClientBuilder, DefaultNodeRuntime, EventSubscription,
 };
 
-pub const BOARD_ACTIVE_VALIDATORS: &'static str = "active:val";
-pub const BOARD_ALL_VALIDATORS: &'static str = "all:val";
 pub const BOARD_TOTAL_POINTS_ERAS: &'static str = "total:points:era";
 pub const BOARD_MAX_POINTS_ERAS: &'static str = "max:points:era";
 pub const BOARD_MIN_POINTS_ERAS: &'static str = "min:points:era";
+pub const BOARD_ACTIVE_VALIDATORS: &'static str = "active:val";
+pub const BOARD_ALL_VALIDATORS: &'static str = "all:val";
+pub const BOARD_POINTS_VALIDATORS: &'static str = "points:val";
 pub const BOARD_OWN_STAKE_VALIDATORS: &'static str = "own:stake:val";
 pub const BOARD_TOTAL_STAKE_VALIDATORS: &'static str = "total:stake:val";
 pub const BOARD_JUDGEMENTS_VALIDATORS: &'static str = "judgements:val";
@@ -916,6 +917,17 @@ impl Sync {
         .arg(Key::ActiveErasByValidator(stash.clone()))
         .arg(era_index) // score
         .arg(member) // member
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+      let _: () = redis::cmd("ZADD")
+        .arg(Key::BoardAtEra(
+          era_index,
+          BOARD_POINTS_VALIDATORS.to_string(),
+        ))
+        .arg(*points) // score
+        .arg(stash.to_string()) // member
         .query_async(&mut conn as &mut Connection)
         .await
         .map_err(CacheError::RedisCMDError)?;
