@@ -25,5 +25,5 @@ serde = "1"
 thiserror = "^1.0.24"
 substrate-subxt = { git = "https://github.com/turboflakes/substrate-subxt", rev = "3386fa5" }
 chrono = "0.4"
-codec = { package = "parity-scale-codec", version = "2.0.1", default-features = false, features = ["derive", "full"] }
+codec = { package = "parity-scale-codec", version = "2.2.0", default-features = false, features = ["derive", "full"] }
 regex = "1.4.6"
