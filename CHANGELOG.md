@@ -258,3 +258,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Change
   
 - Update substrate_ext dependency
+
+## [0.7.16] - 2021-10-09
+
+### Change
+  
+- Update substrate_ext dependency
