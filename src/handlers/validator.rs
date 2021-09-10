@@ -617,7 +617,7 @@ async fn calculate_avg_points(cache: Data<RedisPool>, name: &str) -> Result<f64,
     Ok(avg)
 }
 
-async fn calculate_confidence_interval_95(
+async fn _calculate_confidence_interval_95(
     cache: Data<RedisPool>,
     name: &str,
 ) -> Result<(f64, f64), ApiError> {

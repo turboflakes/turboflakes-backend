@@ -18,6 +18,7 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
+#![allow(dead_code)]
 
 pub fn mean(list: &Vec<u32>) -> f64 {
   if list.len() == 0 {
@@ -35,7 +36,7 @@ pub fn mean_f64(list: &Vec<f64>) -> f64 {
   sum / (list.len() as f64)
 }
 
-pub fn mean_u128(list: &Vec<u128>) -> f64 {
+pub fn _mean_u128(list: &Vec<u128>) -> f64 {
   if list.len() == 0 {
     return 0.0;
   }
