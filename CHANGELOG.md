@@ -7,7 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.7.17] - 2021-10-09
+## [0.7.18] - 2021-09-15
+
+### Change
+  
+- Update substrate_ext dependency
+- Fix 'EraPaid' on-chain event
+
+## [0.7.17] - 2021-09-10
 
 ### Change
   
@@ -15,7 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fix dead code warning
 - Reverse changelog file
 
-## [0.7.16] - 2021-10-09
+## [0.7.16] - 2021-09-09
 
 ### Change
   

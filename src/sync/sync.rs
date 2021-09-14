@@ -39,7 +39,7 @@ use substrate_subxt::{
   sp_core::Decode,
   sp_runtime::AccountId32,
   staking::{
-    ActiveEraStoreExt, BondedStoreExt, EraIndex, EraPayoutEvent, ErasRewardPointsStoreExt,
+    ActiveEraStoreExt, BondedStoreExt, EraIndex, EraPaidEvent, ErasRewardPointsStoreExt,
     ErasStakersClippedStoreExt, ErasStakersStoreExt, ErasTotalStakeStoreExt,
     ErasValidatorPrefsStoreExt, ErasValidatorRewardStoreExt, HistoryDepthStoreExt, LedgerStoreExt,
     NominatorsStoreExt, PayeeStoreExt, RewardDestination, RewardPoint, ValidatorsStoreExt,
@@ -193,17 +193,16 @@ impl Sync {
 
   /// Sync previous era history every era payout
   async fn subscribe_era_payout_events(&self) -> Result<(), SyncError> {
-    info!("Starting era payout subscription");
+    info!("Subscribe 'EraPaid' on-chain finalized event");
     self.ready_or_await().await;
     let client = self.node_client.clone();
     let sub = client.subscribe_finalized_events().await?;
     let decoder = client.events_decoder();
     let mut sub = EventSubscription::<DefaultNodeRuntime>::new(sub, decoder);
-    sub.filter_event::<EraPayoutEvent<_>>();
-    info!("Waiting for EraPayout events");
+    sub.filter_event::<EraPaidEvent<_>>();
     while let Some(result) = sub.next().await {
       if let Ok(raw_event) = result {
-        match EraPayoutEvent::<DefaultNodeRuntime>::decode(&mut &raw_event.data[..]) {
+        match EraPaidEvent::<DefaultNodeRuntime>::decode(&mut &raw_event.data[..]) {
           Ok(event) => {
             info!("Successfully decoded event {:?}", event);
             if self.is_syncing().await? {
