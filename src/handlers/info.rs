@@ -42,6 +42,7 @@ pub struct NetworkDetailsResponse {
     pub name: String,
     pub token_symbol: String,
     pub token_decimals: u8,
+    pub ss58_format: u8,
     pub substrate_node_url: String,
 }
 
@@ -56,6 +57,11 @@ impl From<BTreeMap<String, String>> for NetworkDetailsResponse {
                 .to_string(),
             token_decimals: data
                 .get("token_decimals")
+                .unwrap_or(&zero)
+                .parse::<u8>()
+                .unwrap_or_default(),
+            ss58_format: data
+                .get("ss58_format")
                 .unwrap_or(&zero)
                 .parse::<u8>()
                 .unwrap_or_default(),

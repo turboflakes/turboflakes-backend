@@ -300,6 +300,11 @@ impl Sync {
             properties.token_decimals.to_string(),
         );
         data.insert(
+            "ss58_format".to_string(),
+            properties.ss58_format.to_string(),
+        );
+
+        data.insert(
             "substrate_node_url".to_string(),
             env::var("SUBSTRATE_WS_URL").unwrap_or_default().into(),
         );
