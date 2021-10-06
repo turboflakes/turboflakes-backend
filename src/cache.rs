@@ -38,45 +38,43 @@ pub type RedisPool = Pool<RedisConnectionManager>;
 pub type RedisConn = Connection<RedisConnectionManager>;
 
 fn get_redis_url(config: Config) -> String {
-  format!(
-    "redis://:{}@{}/{}",
-    config.redis_password, config.redis_hostname, config.redis_database
-  )
-  .to_string()
+    format!(
+        "redis://:{}@{}/{}",
+        config.redis_password, config.redis_hostname, config.redis_database
+    )
+    .to_string()
 }
 
 pub fn create_pool(config: Config) -> Result<RedisPool, CacheError> {
-  let redis_url = get_redis_url(config);
-  let client = redis::Client::open(redis_url).map_err(CacheError::RedisClientError)?;
-  let manager = RedisConnectionManager::new(client);
-  Ok(
-    Pool::builder()
-      .get_timeout(Some(Duration::from_secs(CACHE_POOL_TIMEOUT_SECONDS)))
-      .max_open(CACHE_POOL_MAX_OPEN)
-      .max_idle(CACHE_POOL_MAX_IDLE)
-      .max_lifetime(Some(Duration::from_secs(CACHE_POOL_EXPIRE_SECONDS)))
-      .build(manager),
-  )
+    let redis_url = get_redis_url(config);
+    let client = redis::Client::open(redis_url).map_err(CacheError::RedisClientError)?;
+    let manager = RedisConnectionManager::new(client);
+    Ok(Pool::builder()
+        .get_timeout(Some(Duration::from_secs(CACHE_POOL_TIMEOUT_SECONDS)))
+        .max_open(CACHE_POOL_MAX_OPEN)
+        .max_idle(CACHE_POOL_MAX_IDLE)
+        .max_lifetime(Some(Duration::from_secs(CACHE_POOL_EXPIRE_SECONDS)))
+        .build(manager))
 }
 
 pub fn create_or_await_pool(config: Config) -> RedisPool {
-  loop {
-    match create_pool(config.clone()) {
-      Ok(pool) => break pool,
-      Err(e) => {
-        error!("{}", e);
-        info!("Awaiting for Redis to be ready");
-        thread::sleep(time::Duration::from_secs(6));
-      }
+    loop {
+        match create_pool(config.clone()) {
+            Ok(pool) => break pool,
+            Err(e) => {
+                error!("{}", e);
+                info!("Awaiting for Redis to be ready");
+                thread::sleep(time::Duration::from_secs(6));
+            }
+        }
     }
-  }
 }
 
 pub fn add_pool(cfg: &mut web::ServiceConfig) {
-  let pool = create_pool(CONFIG.clone()).expect("failed to create Redis pool");
-  cfg.data(pool);
+    let pool = create_pool(CONFIG.clone()).expect("failed to create Redis pool");
+    cfg.data(pool);
 }
 
 pub async fn get_conn(pool: &RedisPool) -> Result<RedisConn, CacheError> {
-  pool.get().await.map_err(CacheError::RedisPoolError)
+    pool.get().await.map_err(CacheError::RedisPoolError)
 }

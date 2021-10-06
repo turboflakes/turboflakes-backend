@@ -31,8 +31,8 @@ use crate::cache::add_pool;
 use crate::config::CONFIG;
 use crate::routes::routes;
 use crate::sync::sync::Sync;
-use actix_web::{http, middleware, App, HttpServer};
 use actix_cors::Cors;
+use actix_web::{http, middleware, App, HttpServer};
 use log::info;
 use std::env;
 

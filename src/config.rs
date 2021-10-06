@@ -38,49 +38,49 @@ use std::env;
 
 #[derive(Clone, Deserialize, Debug)]
 pub struct Config {
-  pub turboflakes_host: String,
-  pub turboflakes_port: u16,
-  pub rust_backtrace: u8,
-  pub rust_log: String,
-  pub substrate_ws_url: String,
-  pub redis_hostname: String,
-  pub redis_password: String,
-  pub redis_database: u8,
+    pub turboflakes_host: String,
+    pub turboflakes_port: u16,
+    pub rust_backtrace: u8,
+    pub rust_log: String,
+    pub substrate_ws_url: String,
+    pub redis_hostname: String,
+    pub redis_password: String,
+    pub redis_database: u8,
 }
 
 // Set Config struct into a CONFIG lazy_static to avoid multiple processing
 lazy_static! {
-  pub static ref CONFIG: Config = get_config();
+    pub static ref CONFIG: Config = get_config();
 }
 
 /// Inject dotenv and env vars into the Config struct
 fn get_config() -> Config {
-  let config_filename = env::var("TURBOFLAKES_CONFIG_FILENAME").unwrap_or(".env".to_string());
-  dotenv::from_filename(&config_filename).ok();
+    let config_filename = env::var("TURBOFLAKES_CONFIG_FILENAME").unwrap_or(".env".to_string());
+    dotenv::from_filename(&config_filename).ok();
 
-  env_logger::try_init().unwrap_or_default();
-  
-  info!("Loading configuration from {} file", &config_filename);
+    env_logger::try_init().unwrap_or_default();
 
-  match envy::from_env::<Config>() {
-    Ok(config) => config,
-    Err(error) => panic!("Configuration error: {:#?}", error),
-  }
+    info!("Loading configuration from {} file", &config_filename);
+
+    match envy::from_env::<Config>() {
+        Ok(config) => config,
+        Err(error) => panic!("Configuration error: {:#?}", error),
+    }
 }
 
 #[cfg(test)]
 mod tests {
-  use super::*;
+    use super::*;
 
-  #[test]
-  fn it_gets_a_config() {
-    let config = get_config();
-    assert_ne!(config.rust_log, "".to_string());
-  }
+    #[test]
+    fn it_gets_a_config() {
+        let config = get_config();
+        assert_ne!(config.rust_log, "".to_string());
+    }
 
-  #[test]
-  fn it_gets_a_config_from_the_lazy_static() {
-    let config = &CONFIG;
-    assert_ne!(config.rust_log, "".to_string());
-  }
+    #[test]
+    fn it_gets_a_config_from_the_lazy_static() {
+        let config = &CONFIG;
+        assert_ne!(config.rust_log, "".to_string());
+    }
 }

@@ -20,34 +20,34 @@
 // SOFTWARE.
 
 use crate::handlers::{
-  era::get_era,
-  health::get_health,
-  info::get_info,
-  validator::{get_validator, get_validator_rank, get_validator_eras, get_validators},
+    era::get_era,
+    health::get_health,
+    info::get_info,
+    validator::{get_validator, get_validator_eras, get_validator_rank, get_validators},
 };
 use actix_web::web;
 
 /// All routes are placed here
 pub fn routes(cfg: &mut web::ServiceConfig) {
-  cfg
-    // Index
-    .route("/", web::get().to(get_info))
-    // Healthcheck
-    .route("/health", web::get().to(get_health))
-    // /api/v1 routes
-    .service(
-      web::scope("/api/v1")
-        // API info
-        .route("", web::get().to(get_info))
-        // ERA routes
-        .service(web::scope("/era").route("/{era_index}", web::get().to(get_era)))
-        // VALIDATOR routes
+    cfg
+        // Index
+        .route("/", web::get().to(get_info))
+        // Healthcheck
+        .route("/health", web::get().to(get_health))
+        // /api/v1 routes
         .service(
-          web::scope("/validator")
-            .route("/{stash}", web::get().to(get_validator))
-            .route("/{stash}/rank", web::get().to(get_validator_rank))
-            .route("/{stash}/eras", web::get().to(get_validator_eras))
-            .route("", web::get().to(get_validators)),
-        ),
-    );
+            web::scope("/api/v1")
+                // API info
+                .route("", web::get().to(get_info))
+                // ERA routes
+                .service(web::scope("/era").route("/{era_index}", web::get().to(get_era)))
+                // VALIDATOR routes
+                .service(
+                    web::scope("/validator")
+                        .route("/{stash}", web::get().to(get_validator))
+                        .route("/{stash}/rank", web::get().to(get_validator_rank))
+                        .route("/{stash}/eras", web::get().to(get_validator_eras))
+                        .route("", web::get().to(get_validators)),
+                ),
+        );
 }

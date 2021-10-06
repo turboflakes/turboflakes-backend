@@ -35,7 +35,7 @@ pub struct InfoResponse {
     pub api_path: String,
     pub network: NetworkDetailsResponse,
     pub cache: CacheInfoResponse,
-}  
+}
 
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
 pub struct NetworkDetailsResponse {
@@ -49,10 +49,7 @@ impl From<BTreeMap<String, String>> for NetworkDetailsResponse {
     fn from(data: BTreeMap<String, String>) -> Self {
         let zero = "0".to_string();
         NetworkDetailsResponse {
-            name: data
-                .get("name")
-                .unwrap_or(&"".to_string())
-                .to_string(),
+            name: data.get("name").unwrap_or(&"".to_string()).to_string(),
             token_symbol: data
                 .get("token_symbol")
                 .unwrap_or(&"".to_string())
@@ -131,7 +128,7 @@ pub async fn get_info(cache: Data<RedisPool>) -> Result<Json<InfoResponse>, ApiE
         name: env!("CARGO_PKG_NAME").into(),
         version: env!("CARGO_PKG_VERSION").into(),
         api_path: "/api/v1".into(),
-        network:  network_info.into(),
+        network: network_info.into(),
         cache: cache_info.into(),
     })
 }
