@@ -33,8 +33,41 @@ pub struct InfoResponse {
     pub name: String,
     pub version: String,
     pub api_path: String,
-    pub substrate_node_url: String,
+    pub network: NetworkDetailsResponse,
     pub cache: CacheInfoResponse,
+}  
+
+#[derive(Debug, Deserialize, Serialize, PartialEq)]
+pub struct NetworkDetailsResponse {
+    pub name: String,
+    pub token_symbol: String,
+    pub token_decimals: u8,
+    pub substrate_node_url: String,
+}
+
+impl From<BTreeMap<String, String>> for NetworkDetailsResponse {
+    fn from(data: BTreeMap<String, String>) -> Self {
+        let zero = "0".to_string();
+        NetworkDetailsResponse {
+            name: data
+                .get("name")
+                .unwrap_or(&"".to_string())
+                .to_string(),
+            token_symbol: data
+                .get("token_symbol")
+                .unwrap_or(&"".to_string())
+                .to_string(),
+            token_decimals: data
+                .get("token_decimals")
+                .unwrap_or(&zero)
+                .parse::<u8>()
+                .unwrap_or_default(),
+            substrate_node_url: data
+                .get("substrate_node_url")
+                .unwrap_or(&"".to_string())
+                .to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
@@ -82,8 +115,14 @@ impl From<BTreeMap<String, String>> for CacheInfoResponse {
 /// Handler to get information about the service
 pub async fn get_info(cache: Data<RedisPool>) -> Result<Json<InfoResponse>, ApiError> {
     let mut conn = get_conn(&cache).await?;
-    let data: BTreeMap<String, String> = redis::cmd("HGETALL")
+    let cache_info: BTreeMap<String, String> = redis::cmd("HGETALL")
         .arg(sync::Key::Info)
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    let network_info: BTreeMap<String, String> = redis::cmd("HGETALL")
+        .arg(sync::Key::Network)
         .query_async(&mut conn as &mut Connection)
         .await
         .map_err(CacheError::RedisCMDError)?;
@@ -92,7 +131,7 @@ pub async fn get_info(cache: Data<RedisPool>) -> Result<Json<InfoResponse>, ApiE
         name: env!("CARGO_PKG_NAME").into(),
         version: env!("CARGO_PKG_VERSION").into(),
         api_path: "/api/v1".into(),
-        substrate_node_url: env::var("SUBSTRATE_WS_URL").unwrap_or_default().into(),
-        cache: data.into(),
+        network:  network_info.into(),
+        cache: cache_info.into(),
     })
 }

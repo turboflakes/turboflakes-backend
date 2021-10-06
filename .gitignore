@@ -1,4 +1,6 @@
 /target
 Cargo.lock
 .env
+.env.kusama
+.env.polkadot
 bump-version.sh

@@ -30,8 +30,7 @@ use codec::Encode;
 use log::{debug, error, info, warn};
 use redis::aio::Connection;
 use regex::Regex;
-use std::{collections::BTreeMap, convert::TryInto, marker::PhantomData, result::Result};
-use std::{thread, time};
+use std::{collections::BTreeMap, convert::TryInto, marker::PhantomData, result::Result, env, thread, time};
 use substrate_subxt::{
   identity::{IdentityOfStoreExt, Judgement, SubsOfStoreExt, SuperOfStoreExt},
   session::{NewSessionEvent, ValidatorsStore},
@@ -89,6 +88,7 @@ fn get_account_id_from_storage_key(key: StorageKey) -> AccountId32 {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Key {
+  Network,
   Info,
   Stats,
   ActiveEra,
@@ -103,6 +103,7 @@ pub enum Key {
 impl std::fmt::Display for Key {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match self {
+      Self::Network => write!(f, "network"),
       Self::Info => write!(f, "info"),
       Self::Stats => write!(f, "stats"),
       Self::ActiveEra => write!(f, "era:active"),
@@ -175,6 +176,8 @@ impl Sync {
     self.ready_or_await().await;
 
     self.status(Status::Started).await?;
+
+    self.network().await?;
 
     let active_era = self.active_era().await?;
 
@@ -268,6 +271,33 @@ impl Sync {
     spawn_and_restart_era_payout_subscription_on_error();
     // TODO: Single track events based on the feature that got changed
     // spawn_and_restart_new_session_subscription_on_error();
+  }
+
+  /// Cache network details
+  async fn network(&self) -> Result<(), SyncError> {
+    let mut conn = self
+      .cache_pool
+      .get()
+      .await
+      .map_err(CacheError::RedisPoolError)?;
+
+    let client = self.node_client.clone();
+    let properties = client.properties();
+    
+    let mut data: BTreeMap<String, String> = BTreeMap::new();
+    data.insert("name".to_string(), client.chain_name().to_string());
+    data.insert("token_symbol".to_string(),  properties.token_symbol.to_string());
+    data.insert("token_decimals".to_string(),  properties.token_decimals.to_string());
+    data.insert("substrate_node_url".to_string(), env::var("SUBSTRATE_WS_URL").unwrap_or_default().into());
+    
+    let _: () = redis::cmd("HSET")
+      .arg(Key::Network)
+      .arg(data)
+      .query_async(&mut conn as &mut Connection)
+      .await
+      .map_err(CacheError::RedisCMDError)?;
+
+    Ok(())
   }
 
   /// Sync active era
