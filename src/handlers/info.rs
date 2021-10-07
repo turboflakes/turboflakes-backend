@@ -30,15 +30,15 @@ use std::{collections::BTreeMap, env};
 
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
 pub struct InfoResponse {
-    pub name: String,
-    pub version: String,
+    pub pkg_name: String,
+    pub pkg_version: String,
     pub api_path: String,
-    pub network: NetworkDetailsResponse,
+    pub chain: ChainDetailsResponse,
     pub cache: CacheInfoResponse,
 }
 
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
-pub struct NetworkDetailsResponse {
+pub struct ChainDetailsResponse {
     pub name: String,
     pub token_symbol: String,
     pub token_decimals: u8,
@@ -46,10 +46,10 @@ pub struct NetworkDetailsResponse {
     pub substrate_node_url: String,
 }
 
-impl From<BTreeMap<String, String>> for NetworkDetailsResponse {
+impl From<BTreeMap<String, String>> for ChainDetailsResponse {
     fn from(data: BTreeMap<String, String>) -> Self {
         let zero = "0".to_string();
-        NetworkDetailsResponse {
+        ChainDetailsResponse {
             name: data.get("name").unwrap_or(&"".to_string()).to_string(),
             token_symbol: data
                 .get("token_symbol")
@@ -124,17 +124,17 @@ pub async fn get_info(cache: Data<RedisPool>) -> Result<Json<InfoResponse>, ApiE
         .await
         .map_err(CacheError::RedisCMDError)?;
 
-    let network_info: BTreeMap<String, String> = redis::cmd("HGETALL")
+    let chain_info: BTreeMap<String, String> = redis::cmd("HGETALL")
         .arg(sync::Key::Network)
         .query_async(&mut conn as &mut Connection)
         .await
         .map_err(CacheError::RedisCMDError)?;
 
     respond_json(InfoResponse {
-        name: env!("CARGO_PKG_NAME").into(),
-        version: env!("CARGO_PKG_VERSION").into(),
+        pkg_name: env!("CARGO_PKG_NAME").into(),
+        pkg_version: env!("CARGO_PKG_VERSION").into(),
         api_path: "/api/v1".into(),
-        network: network_info.into(),
+        chain: chain_info.into(),
         cache: cache_info.into(),
     })
 }
