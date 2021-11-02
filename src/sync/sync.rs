@@ -22,32 +22,39 @@
 use crate::cache::{create_or_await_pool, RedisPool};
 use crate::config::{Config, CONFIG};
 use crate::errors::{CacheError, SyncError};
+use crate::sync::runtime::{
+    node_runtime,
+    node_runtime::{runtime_types::pallet_identity::types::Data, staking, DefaultConfig},
+};
 use crate::sync::stats::{max, mean, median, min};
 use async_recursion::async_recursion;
 use async_std::task;
 use chrono::Utc;
-use codec::Encode;
+use codec::{Decode, Encode};
 use log::{debug, error, info, warn};
 use redis::aio::Connection;
 use regex::Regex;
 use std::{
     collections::BTreeMap, convert::TryInto, env, marker::PhantomData, result::Result, thread, time,
 };
-use substrate_subxt::{
-    identity::{IdentityOfStoreExt, Judgement, SubsOfStoreExt, SuperOfStoreExt},
-    session::{NewSessionEvent, ValidatorsStore},
-    sp_core::storage::StorageKey,
-    sp_core::Decode,
+use subxt::{
+    // identity::{IdentityOfStoreExt, Judgement, SubsOfStoreExt, SuperOfStoreExt},
+    // session::{NewSessionEvent, ValidatorsStore},
+    sp_core::{crypto, storage::StorageKey},
     sp_runtime::AccountId32,
-    staking::{
-        ActiveEraStoreExt, BondedStoreExt, EraIndex, EraPaidEvent, ErasRewardPointsStoreExt,
-        ErasStakersClippedStoreExt, ErasStakersStoreExt, ErasTotalStakeStoreExt,
-        ErasValidatorPrefsStoreExt, ErasValidatorRewardStoreExt, HistoryDepthStoreExt,
-        LedgerStoreExt, NominatorsStoreExt, PayeeStoreExt, RewardDestination, RewardPoint,
-        ValidatorsStoreExt,
-    },
-    Client, ClientBuilder, DefaultNodeRuntime, EventSubscription,
+    // staking::{
+    //     ActiveEraStoreExt, BondedStoreExt, EraIndex, EraPaidEvent, ErasRewardPointsStoreExt,
+    //     ErasStakersClippedStoreExt, ErasStakersStoreExt, ErasTotalStakeStoreExt,
+    //     ErasValidatorPrefsStoreExt, ErasValidatorRewardStoreExt, HistoryDepthStoreExt,
+    //     LedgerStoreExt, NominatorsStoreExt, PayeeStoreExt, RewardDestination, RewardPoint,
+    //     ValidatorsStoreExt,
+    // },
+    Client,
+    ClientBuilder,
+    EventSubscription,
 };
+
+type EraIndex = u32;
 
 pub const BOARD_TOTAL_POINTS_ERAS: &'static str = "total:points:era";
 pub const BOARD_MAX_POINTS_ERAS: &'static str = "max:points:era";
@@ -62,18 +69,26 @@ pub const BOARD_SUB_ACCOUNTS_VALIDATORS: &'static str = "sub:accounts:val";
 
 pub async fn create_substrate_node_client(
     config: Config,
-) -> Result<Client<DefaultNodeRuntime>, substrate_subxt::Error> {
-    ClientBuilder::<DefaultNodeRuntime>::new()
+) -> Result<Client<DefaultConfig>, subxt::Error> {
+    ClientBuilder::new()
         .set_url(config.substrate_ws_url)
-        .skip_type_sizes_check()
-        .build()
+        .build::<DefaultConfig>()
         .await
 }
 
-pub async fn create_or_await_substrate_node_client(config: Config) -> Client<DefaultNodeRuntime> {
+pub async fn create_or_await_substrate_node_client(config: Config) -> Client<DefaultConfig> {
     loop {
         match create_substrate_node_client(config.clone()).await {
-            Ok(client) => break client,
+            Ok(client) => {
+                info!(
+                    "Connected to {} network using {} * Substrate node {} v{}",
+                    client.chain_name(),
+                    config.substrate_ws_url,
+                    client.node_name(),
+                    client.node_version()
+                );
+                break client;
+            }
             Err(e) => {
                 error!("{}", e);
                 info!("Awaiting for Substrate node client to be ready");
@@ -140,15 +155,32 @@ pub enum Status {
 
 pub struct Sync {
     pub cache_pool: RedisPool,
-    pub node_client: substrate_subxt::Client<DefaultNodeRuntime>,
+    api: node_runtime::RuntimeApi<DefaultConfig>,
 }
 
 impl Sync {
     pub async fn new() -> Sync {
+        let client = create_or_await_substrate_node_client(CONFIG.clone()).await;
+        let api: node_runtime::RuntimeApi<DefaultConfig> = client.clone().to_runtime_api();
+
+        let properties = client.properties();
+        // Display SS58 addresses based on the connected chain
+        crypto::set_default_ss58_version(crypto::Ss58AddressFormat::custom(
+            properties.ss58_format.into(),
+        ));
+
         Sync {
             cache_pool: create_or_await_pool(CONFIG.clone()),
-            node_client: create_or_await_substrate_node_client(CONFIG.clone()).await,
+            api,
         }
+    }
+
+    pub fn client(&self) -> &Client<DefaultConfig> {
+        &self.api.client
+    }
+
+    pub fn api(&self) -> &node_runtime::RuntimeApi<DefaultConfig> {
+        &self.api
     }
 
     async fn check_cache(&self) -> Result<(), SyncError> {
@@ -184,15 +216,15 @@ impl Sync {
 
         self.network().await?;
 
-        let active_era = self.active_era().await?;
+        // let active_era = self.active_era().await?;
 
-        self.eras_history_depth(active_era).await?;
+        // self.eras_history_depth(active_era).await?;
 
-        self.validators().await?;
+        // self.validators().await?;
 
-        self.nominators().await?;
+        // self.nominators().await?;
 
-        self.active_validators().await?;
+        // self.active_validators().await?;
 
         self.status(Status::Finished).await?;
 
@@ -203,14 +235,15 @@ impl Sync {
     async fn subscribe_era_payout_events(&self) -> Result<(), SyncError> {
         info!("Subscribe 'EraPaid' on-chain finalized event");
         self.ready_or_await().await;
-        let client = self.node_client.clone();
-        let sub = client.subscribe_finalized_events().await?;
+        let client = self.client();
+        let sub = client.rpc().subscribe_finalized_events().await?;
         let decoder = client.events_decoder();
-        let mut sub = EventSubscription::<DefaultNodeRuntime>::new(sub, decoder);
-        sub.filter_event::<EraPaidEvent<_>>();
+        let mut sub = EventSubscription::<DefaultConfig>::new(sub, decoder);
+        sub.filter_event::<node_runtime::staking::events::EraPaid>();
         while let Some(result) = sub.next().await {
             if let Ok(raw_event) = result {
-                match EraPaidEvent::<DefaultNodeRuntime>::decode(&mut &raw_event.data[..]) {
+                match node_runtime::staking::events::PayoutStarted::decode(&mut &raw_event.data[..])
+                {
                     Ok(event) => {
                         info!("Successfully decoded event {:?}", event);
                         if self.is_syncing().await? {
@@ -219,7 +252,7 @@ impl Sync {
                         }
                         self.status(Status::Started).await?;
                         self.active_era().await?;
-                        self.eras_history(event.era_index, Some(true)).await?;
+                        self.eras_history(event.0, Some(true)).await?;
                         self.validators().await?;
                         self.active_validators().await?;
                         self.nominators().await?;
@@ -240,15 +273,15 @@ impl Sync {
     async fn subscribe_new_session_events(&self) -> Result<(), SyncError> {
         info!("Starting new session subscription");
         self.ready_or_await().await;
-        let client = self.node_client.clone();
-        let sub = client.subscribe_finalized_events().await?;
+        let client = self.client();
+        let sub = client.rpc().subscribe_finalized_events().await?;
         let decoder = client.events_decoder();
-        let mut sub = EventSubscription::<DefaultNodeRuntime>::new(sub, decoder);
-        sub.filter_event::<NewSessionEvent<_>>();
+        let mut sub = EventSubscription::<DefaultConfig>::new(sub, decoder);
+        sub.filter_event::<node_runtime::session::events::NewSession>();
         info!("Waiting for NewSession events");
         while let Some(result) = sub.next().await {
             if let Ok(raw_event) = result {
-                match NewSessionEvent::<DefaultNodeRuntime>::decode(&mut &raw_event.data[..]) {
+                match node_runtime::session::events::NewSession::decode(&mut &raw_event.data[..]) {
                     Ok(event) => {
                         info!("Successfully decoded event {:?}", event);
                         if self.is_syncing().await? {
@@ -286,7 +319,7 @@ impl Sync {
             .await
             .map_err(CacheError::RedisPoolError)?;
 
-        let client = self.node_client.clone();
+        let client = self.client();
         let properties = client.properties();
 
         let mut data: BTreeMap<String, String> = BTreeMap::new();
@@ -326,18 +359,22 @@ impl Sync {
             .get()
             .await
             .map_err(CacheError::RedisPoolError)?;
-        let client = self.node_client.clone();
-        let active_era = client.active_era(None).await?;
+        let api = self.api();
+
+        let active_era_index = match api.storage().staking().active_era(None).await? {
+            Some(active_era_info) => active_era_info.index,
+            None => return Err(SyncError::Other("Active era not available".into())),
+        };
 
         let _: () = redis::cmd("SET")
             .arg(Key::ActiveEra)
-            .arg(active_era.index)
+            .arg(active_era_index)
             .query_async(&mut conn as &mut Connection)
             .await
             .map_err(CacheError::RedisCMDError)?;
 
-        info!("Successfully synced active era {}", active_era.index);
-        Ok(active_era.index)
+        info!("Successfully synced active era {}", active_era_index);
+        Ok(active_era_index)
     }
 
     /// Cache syncronization status
@@ -403,17 +440,20 @@ impl Sync {
             .get()
             .await
             .map_err(CacheError::RedisPoolError)?;
-        let client = self.node_client.clone();
+        let api = self.api();
 
         info!("Starting validators sync");
-        let history_depth: u32 = client.history_depth(None).await?;
-        let active_era = client.active_era(None).await?;
-        let mut validators = client.validators_iter(None).await?;
+        let history_depth: u32 = api.storage().staking().history_depth(None).await?;
+        let active_era_index = match api.storage().staking().active_era(None).await? {
+            Some(active_era_info) => active_era_info.index,
+            None => return Err(SyncError::Other("Active era not available".into())),
+        };
+        let mut validators = api.storage().staking().validators_iter(None).await?;
         let mut i: u32 = 0;
         while let Some((key, validator_prefs)) = validators.next().await? {
             let stash = get_account_id_from_storage_key(key);
             // Sync controller
-            if let Some(controller) = client.bonded(stash.clone(), None).await? {
+            if let Some(controller) = api.storage().staking().bonded(stash.clone(), None).await? {
                 let mut validator_data: BTreeMap<String, String> = BTreeMap::new();
                 validator_data.insert("active".to_string(), "false".to_string());
                 validator_data.insert(
@@ -436,20 +476,21 @@ impl Sync {
                         .map_err(CacheError::RedisCMDError)?;
                 }
                 // Sync payee - where the reward payment should be made
-                let reward_staked =
-                    if RewardDestination::Staked == client.payee(stash.clone(), None).await? {
-                        true
-                    } else {
-                        false
-                    };
+                let reward_staked = if RewardDestination::Staked
+                    == api.storage().staking().payee(stash.clone(), None).await?
+                {
+                    true
+                } else {
+                    false
+                };
                 validator_data.insert("reward_staked".to_string(), reward_staked.to_string());
 
                 // Calculate inclusion rate
                 let inclusion_rate = self
                     .calculate_inclusion_rate(
                         &stash,
-                        active_era.index - history_depth,
-                        active_era.index,
+                        active_era_index - history_depth,
+                        active_era_index,
                     )
                     .await?;
                 validator_data.insert("inclusion_rate".to_string(), inclusion_rate.to_string());
@@ -458,8 +499,8 @@ impl Sync {
                 let avg_reward_points = self
                     .calculate_avg_reward_points(
                         &stash,
-                        active_era.index - history_depth,
-                        active_era.index,
+                        active_era_index - history_depth,
+                        active_era_index,
                     )
                     .await?;
                 validator_data.insert(
@@ -486,7 +527,7 @@ impl Sync {
                 // Add stash to the sorted set board named: all
                 let _: () = redis::cmd("ZADD")
                     .arg(Key::BoardAtEra(
-                        active_era.index,
+                        active_era_index,
                         BOARD_ALL_VALIDATORS.to_string(),
                     ))
                     .arg(0) // score
@@ -543,7 +584,7 @@ impl Sync {
 
         info!(
             "Successfully synced {} validators in era {}",
-            i, active_era.index
+            i, active_era_index
         );
 
         Ok(())
@@ -556,14 +597,14 @@ impl Sync {
             .get()
             .await
             .map_err(CacheError::RedisPoolError)?;
-        let client = self.node_client.clone();
+        let api = self.api();
 
         info!("Starting nominators sync");
-        let mut nominators = client.nominators_iter(None).await?;
+        let mut nominators = api.storage().staking().nominators_iter(None).await?;
         let mut i = 0;
         while let Some((key, nominations)) = nominators.next().await? {
             let stash = get_account_id_from_storage_key(key);
-            if let Some(controller) = client.bonded(stash.clone(), None).await? {
+            if let Some(controller) = api.storage().staking().bonded(stash.clone(), None).await? {
                 let nominator_stake = self.get_controller_stake(&controller).await?;
                 for validator_stash in nominations.targets.iter() {
                     let exists: bool = redis::cmd("EXISTS")
@@ -650,41 +691,49 @@ impl Sync {
         stash: &AccountId32,
         sub_account_name: Option<String>,
     ) -> Result<BTreeMap<String, String>, SyncError> {
-        let client = self.node_client.clone();
+        let api = self.api();
         let mut identity_data: BTreeMap<String, String> = BTreeMap::new();
-        let re = Regex::new(r"[^\x20-\x7E]").unwrap();
-        match client.identity_of(stash.clone(), None).await? {
-            Some(registration) => {
-                let mut parent = String::from_utf8(registration.info.display.encode())
-                    .unwrap_or("-".to_string());
-                parent = re.replace_all(&parent, "").trim().to_string();
+
+        match api
+            .storage()
+            .identity()
+            .identity_of(stash.clone(), None)
+            .await?
+        {
+            Some(identity) => {
+                debug!("identity {:?}", identity);
+                let parent = parse_identity_data(identity.info.display);
                 // Name
-                let name = if let Some(n) = sub_account_name {
-                    format!("{}/{}", parent, n)
-                } else {
-                    parent
+                let name = match sub_account_name {
+                    Some(child) => format!("{}/{}", parent, child),
+                    None => parent,
                 };
                 identity_data.insert("name".to_string(), name);
                 // Judgements: [(0, Judgement::Reasonable)]
-                let judgements = registration
-                    .judgements
-                    .into_iter()
-                    .fold(0, |acc, x| match x.1 {
-                        Judgement::Reasonable => acc + 1,
-                        Judgement::KnownGood => acc + 1,
-                        _ => acc,
-                    });
+                let judgements = identity.judgements.into_iter().fold(0, |acc, x| match x.1 {
+                    Judgement::Reasonable => acc + 1,
+                    Judgement::KnownGood => acc + 1,
+                    _ => acc,
+                });
                 identity_data.insert("judgements".to_string(), judgements.to_string());
                 // Identity Sub-Accounts
-                let (_, subs) = client.subs_of(stash.clone(), None).await?;
+                let (_, subs) = api
+                    .storage()
+                    .identity()
+                    .subs_of(stash.clone(), None)
+                    .await?;
                 identity_data.insert("sub_accounts".to_string(), subs.len().to_string());
             }
             None => {
-                if let Some((parent_account, data)) = client.super_of(stash.clone(), None).await? {
-                    let mut sub_account_name = String::from_utf8(data.encode()).unwrap();
-                    sub_account_name = re.replace_all(&sub_account_name, "").trim().to_string();
+                if let Some((parent_account, data)) = api
+                    .storage()
+                    .identity()
+                    .super_of(stash.clone(), None)
+                    .await?
+                {
+                    let sub_account_name = parse_identity_data(data);
                     return self
-                        .get_identity(&parent_account, Some(sub_account_name))
+                        .get_identity(&parent_account, Some(sub_account_name.to_string()))
                         .await;
                 } else {
                     identity_data.insert("name".to_string(), "".to_string());
@@ -697,8 +746,13 @@ impl Sync {
     }
 
     async fn get_controller_stake(&self, controller: &AccountId32) -> Result<u128, SyncError> {
-        let client = self.node_client.clone();
-        let amount = if let Some(ledger) = client.ledger(controller.clone(), None).await? {
+        let api = self.api();
+        let amount = if let Some(ledger) = api
+            .storage()
+            .staking()
+            .ledger(controller.clone(), None)
+            .await?
+        {
             ledger.active
         } else {
             0
@@ -826,9 +880,9 @@ impl Sync {
 
     /// Sync all era information for all history depth
     async fn eras_history_depth(&self, active_era_index: EraIndex) -> Result<(), SyncError> {
-        let client = self.node_client.clone();
+        let api = self.api();
 
-        let history_depth: u32 = client.history_depth(None).await?;
+        let history_depth: u32 = api.storage().staking().history_depth(None).await?;
         let start_index = active_era_index - history_depth;
         for era_index in start_index..active_era_index {
             self.eras_history(era_index, None).await?;
@@ -894,9 +948,13 @@ impl Sync {
             .get()
             .await
             .map_err(CacheError::RedisPoolError)?;
-        let client = self.node_client.clone();
+        let api = self.api();
 
-        let result = client.eras_validator_reward(era_index, None).await?;
+        let result = api
+            .storage()
+            .staking()
+            .eras_validator_reward(era_index, None)
+            .await?;
         let reward = match result {
             Some(v) => v,
             None => 0,
@@ -920,9 +978,13 @@ impl Sync {
             .get()
             .await
             .map_err(CacheError::RedisPoolError)?;
-        let client = self.node_client.clone();
+        let api = self.api();
 
-        let total_stake = client.eras_total_stake(era_index, None).await?;
+        let total_stake = api
+            .storage()
+            .staking()
+            .eras_total_stake(era_index, None)
+            .await?;
         let _: () = redis::cmd("HSET")
             .arg(Key::Era(era_index))
             .arg(&[("total_stake", total_stake.to_string())])
@@ -942,9 +1004,13 @@ impl Sync {
             .get()
             .await
             .map_err(CacheError::RedisPoolError)?;
-        let client = self.node_client.clone();
+        let api = self.api();
 
-        let era_reward_points = client.eras_reward_points(era_index, None).await?;
+        let era_reward_points = api
+            .storage()
+            .staking()
+            .eras_reward_points(era_index, None)
+            .await?;
         let mut reward_points: Vec<RewardPoint> =
             Vec::with_capacity(era_reward_points.individual.len());
         for (stash, points) in era_reward_points.individual.iter() {
@@ -1054,10 +1120,12 @@ impl Sync {
         stash: &AccountId32,
         data: &'a mut BTreeMap<String, String>,
     ) -> Result<(), SyncError> {
-        let client = self.node_client.clone();
+        let api = self.api();
 
         let stash_cloned = stash.clone();
-        let validator_prefs = client
+        let validator_prefs = api
+            .storage()
+            .staking()
             .eras_validator_prefs(era_index, stash_cloned, None)
             .await?;
         data.insert(
@@ -1080,9 +1148,13 @@ impl Sync {
         stash: &AccountId32,
         data: &'a mut BTreeMap<String, String>,
     ) -> Result<(), SyncError> {
-        let client = self.node_client.clone();
+        let api = self.api();
 
-        let exposure = client.eras_stakers(era_index, stash.clone(), None).await?;
+        let exposure = api
+            .storage()
+            .staking()
+            .eras_stakers(era_index, stash.clone(), None)
+            .await?;
         let mut others_stake: u128 = 0;
         for individual_exposure in exposure.others.iter() {
             others_stake += individual_exposure.value;
@@ -1107,9 +1179,11 @@ impl Sync {
         stash: &AccountId32,
         data: &'a mut BTreeMap<String, String>,
     ) -> Result<(), SyncError> {
-        let client = self.node_client.clone();
+        let api = self.api();
 
-        let exposure = client
+        let exposure = api
+            .storage()
+            .staking()
             .eras_stakers_clipped(era_index, stash.clone(), None)
             .await?;
         let mut others_stake: u128 = 0;
@@ -1169,4 +1243,47 @@ pub fn spawn_and_restart_history_on_error() {
             }
         }
     });
+}
+
+fn parse_identity_data(data: Data) -> String {
+    match data {
+        Data::Raw0(bytes) => parse_display_name(bytes.to_vec()),
+        Data::Raw1(bytes) => parse_display_name(bytes.to_vec()),
+        Data::Raw2(bytes) => parse_display_name(bytes.to_vec()),
+        Data::Raw3(bytes) => parse_display_name(bytes.to_vec()),
+        Data::Raw4(bytes) => parse_display_name(bytes.to_vec()),
+        Data::Raw5(bytes) => parse_display_name(bytes.to_vec()),
+        Data::Raw6(bytes) => parse_display_name(bytes.to_vec()),
+        Data::Raw7(bytes) => parse_display_name(bytes.to_vec()),
+        Data::Raw8(bytes) => parse_display_name(bytes.to_vec()),
+        Data::Raw9(bytes) => parse_display_name(bytes.to_vec()),
+        Data::Raw10(bytes) => parse_display_name(bytes.to_vec()),
+        Data::Raw11(bytes) => parse_display_name(bytes.to_vec()),
+        Data::Raw12(bytes) => parse_display_name(bytes.to_vec()),
+        Data::Raw13(bytes) => parse_display_name(bytes.to_vec()),
+        Data::Raw14(bytes) => parse_display_name(bytes.to_vec()),
+        Data::Raw15(bytes) => parse_display_name(bytes.to_vec()),
+        Data::Raw16(bytes) => parse_display_name(bytes.to_vec()),
+        Data::Raw17(bytes) => parse_display_name(bytes.to_vec()),
+        Data::Raw18(bytes) => parse_display_name(bytes.to_vec()),
+        Data::Raw19(bytes) => parse_display_name(bytes.to_vec()),
+        Data::Raw20(bytes) => parse_display_name(bytes.to_vec()),
+        Data::Raw21(bytes) => parse_display_name(bytes.to_vec()),
+        Data::Raw22(bytes) => parse_display_name(bytes.to_vec()),
+        Data::Raw23(bytes) => parse_display_name(bytes.to_vec()),
+        Data::Raw24(bytes) => parse_display_name(bytes.to_vec()),
+        Data::Raw25(bytes) => parse_display_name(bytes.to_vec()),
+        Data::Raw26(bytes) => parse_display_name(bytes.to_vec()),
+        Data::Raw27(bytes) => parse_display_name(bytes.to_vec()),
+        Data::Raw28(bytes) => parse_display_name(bytes.to_vec()),
+        Data::Raw29(bytes) => parse_display_name(bytes.to_vec()),
+        Data::Raw30(bytes) => parse_display_name(bytes.to_vec()),
+        Data::Raw31(bytes) => parse_display_name(bytes.to_vec()),
+        Data::Raw32(bytes) => parse_display_name(bytes.to_vec()),
+        _ => format!("???"),
+    }
+}
+
+fn parse_display_name(bytes: Vec<u8>) -> String {
+    format!("{}", String::from_utf8(bytes).expect("Identity not utf-8"))
 }
