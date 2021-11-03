@@ -24,7 +24,10 @@ use crate::config::{Config, CONFIG};
 use crate::errors::{CacheError, SyncError};
 use crate::sync::runtime::{
     node_runtime,
-    node_runtime::{runtime_types::pallet_identity::types::Data, staking, DefaultConfig},
+    node_runtime::{
+        runtime_types::pallet_identity::types::{Data, Judgement},
+        runtime_types::pallet_staking::RewardDestination, DefaultConfig,
+    },
 };
 use crate::sync::stats::{max, mean, median, min};
 use async_recursion::async_recursion;
@@ -54,7 +57,11 @@ use subxt::{
     EventSubscription,
 };
 
-type EraIndex = u32;
+/// Counter for the number of eras that have passed.
+pub type EraIndex = u32;
+
+/// Counter for the number of "reward" points earned by a given validator.
+pub type RewardPoint = u32;
 
 pub const BOARD_TOTAL_POINTS_ERAS: &'static str = "total:points:era";
 pub const BOARD_MAX_POINTS_ERAS: &'static str = "max:points:era";
@@ -476,13 +483,13 @@ impl Sync {
                         .map_err(CacheError::RedisCMDError)?;
                 }
                 // Sync payee - where the reward payment should be made
-                let reward_staked = if RewardDestination::Staked
-                    == api.storage().staking().payee(stash.clone(), None).await?
-                {
+                let payee = api.storage().staking().payee(stash.clone(), None).await?;
+                let reward_staked = if RewardDestination::<_>::Staked == payee {
                     true
                 } else {
                     false
                 };
+
                 validator_data.insert("reward_staked".to_string(), reward_staked.to_string());
 
                 // Calculate inclusion rate
@@ -710,7 +717,7 @@ impl Sync {
                 };
                 identity_data.insert("name".to_string(), name);
                 // Judgements: [(0, Judgement::Reasonable)]
-                let judgements = identity.judgements.into_iter().fold(0, |acc, x| match x.1 {
+                let judgements = identity.judgements.0.into_iter().fold(0, |acc, x| match x.1 {
                     Judgement::Reasonable => acc + 1,
                     Judgement::KnownGood => acc + 1,
                     _ => acc,
@@ -722,7 +729,7 @@ impl Sync {
                     .identity()
                     .subs_of(stash.clone(), None)
                     .await?;
-                identity_data.insert("sub_accounts".to_string(), subs.len().to_string());
+                identity_data.insert("sub_accounts".to_string(), subs.0.len().to_string());
             }
             None => {
                 if let Some((parent_account, data)) = api
@@ -833,20 +840,13 @@ impl Sync {
             .get()
             .await
             .map_err(CacheError::RedisPoolError)?;
-        let client = self.node_client.clone();
+            let api = self.api();
 
-        let active_era = client.active_era(None).await?;
-        let store = ValidatorsStore {
-            _runtime: PhantomData,
+        let active_era_index = match api.storage().staking().active_era(None).await? {
+            Some(active_era_info) => active_era_info.index,
+            None => return Err(SyncError::Other("Active era not available".into())),
         };
-        let result = client.fetch(&store, None).await?;
-        let validators = match result {
-            Some(v) => v,
-            None => {
-                warn!("No Validators available in the active era");
-                vec![]
-            }
-        };
+        let validators = api.storage().session().validators(None).await?;
         for stash in validators.iter() {
             // Cache information for the stash
             let _: () = redis::cmd("HSET")
@@ -859,7 +859,7 @@ impl Sync {
             // Add stash to the sorted set board named: active
             let _: () = redis::cmd("ZADD")
                 .arg(Key::BoardAtEra(
-                    active_era.index,
+                    active_era_index,
                     BOARD_ACTIVE_VALIDATORS.to_string(),
                 ))
                 .arg(0) // score
@@ -872,7 +872,7 @@ impl Sync {
         info!(
             "Successfully synced {} active validators in era {}",
             &validators.len(),
-            active_era.index
+            active_era_index
         );
 
         Ok(())

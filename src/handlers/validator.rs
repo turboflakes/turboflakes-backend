@@ -22,13 +22,13 @@
 use crate::cache::{get_conn, RedisPool};
 use crate::errors::{ApiError, CacheError};
 use crate::helpers::respond_json;
-use crate::sync::{stats, sync};
+use crate::sync::{stats, sync, sync::EraIndex};
 use actix_web::web::{Data, Json, Path, Query};
 use log::{error, warn};
 use redis::aio::Connection;
 use serde::{de::Deserializer, Deserialize, Serialize};
 use std::{collections::BTreeMap, str::FromStr};
-use substrate_subxt::{sp_runtime::AccountId32, staking::EraIndex};
+use subxt::sp_runtime::AccountId32;
 
 type ValidatorCache = BTreeMap<String, String>;
 type ValidatorEraCache = BTreeMap<String, String>;
