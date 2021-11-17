@@ -44,6 +44,7 @@ pub struct ChainDetailsResponse {
     pub token_decimals: u8,
     pub ss58_format: u8,
     pub substrate_node_url: String,
+    pub genesis_hash: String,
 }
 
 impl From<BTreeMap<String, String>> for ChainDetailsResponse {
@@ -67,6 +68,10 @@ impl From<BTreeMap<String, String>> for ChainDetailsResponse {
                 .unwrap_or_default(),
             substrate_node_url: data
                 .get("substrate_node_url")
+                .unwrap_or(&"".to_string())
+                .to_string(),
+            genesis_hash: data
+                .get("genesis_hash")
                 .unwrap_or(&"".to_string())
                 .to_string(),
         }

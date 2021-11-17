@@ -26,35 +26,22 @@ use crate::sync::runtime::{
     node_runtime,
     node_runtime::{
         runtime_types::pallet_identity::types::{Data, Judgement},
-        runtime_types::pallet_staking::RewardDestination, DefaultConfig,
+        runtime_types::pallet_staking::RewardDestination,
+        DefaultConfig,
     },
 };
 use crate::sync::stats::{max, mean, median, min};
 use async_recursion::async_recursion;
 use async_std::task;
 use chrono::Utc;
-use codec::{Decode, Encode};
+use codec::Decode;
 use log::{debug, error, info, warn};
 use redis::aio::Connection;
-use regex::Regex;
-use std::{
-    collections::BTreeMap, convert::TryInto, env, marker::PhantomData, result::Result, thread, time,
-};
+use std::{collections::BTreeMap, convert::TryInto, env, result::Result, thread, time};
 use subxt::{
-    // identity::{IdentityOfStoreExt, Judgement, SubsOfStoreExt, SuperOfStoreExt},
-    // session::{NewSessionEvent, ValidatorsStore},
     sp_core::{crypto, storage::StorageKey},
     sp_runtime::AccountId32,
-    // staking::{
-    //     ActiveEraStoreExt, BondedStoreExt, EraIndex, EraPaidEvent, ErasRewardPointsStoreExt,
-    //     ErasStakersClippedStoreExt, ErasStakersStoreExt, ErasTotalStakeStoreExt,
-    //     ErasValidatorPrefsStoreExt, ErasValidatorRewardStoreExt, HistoryDepthStoreExt,
-    //     LedgerStoreExt, NominatorsStoreExt, PayeeStoreExt, RewardDestination, RewardPoint,
-    //     ValidatorsStoreExt,
-    // },
-    Client,
-    ClientBuilder,
-    EventSubscription,
+    Client, ClientBuilder, EventSubscription,
 };
 
 /// Counter for the number of eras that have passed.
@@ -348,6 +335,10 @@ impl Sync {
             "substrate_node_url".to_string(),
             env::var("SUBSTRATE_WS_URL").unwrap_or_default().into(),
         );
+
+        // Cache genesis hash
+        let genesis_hash = client.rpc().genesis_hash().await?;
+        data.insert("genesis_hash".to_string(), format!("{:?}", genesis_hash));
 
         let _: () = redis::cmd("HSET")
             .arg(Key::Network)
@@ -717,11 +708,15 @@ impl Sync {
                 };
                 identity_data.insert("name".to_string(), name);
                 // Judgements: [(0, Judgement::Reasonable)]
-                let judgements = identity.judgements.0.into_iter().fold(0, |acc, x| match x.1 {
-                    Judgement::Reasonable => acc + 1,
-                    Judgement::KnownGood => acc + 1,
-                    _ => acc,
-                });
+                let judgements = identity
+                    .judgements
+                    .0
+                    .into_iter()
+                    .fold(0, |acc, x| match x.1 {
+                        Judgement::Reasonable => acc + 1,
+                        Judgement::KnownGood => acc + 1,
+                        _ => acc,
+                    });
                 identity_data.insert("judgements".to_string(), judgements.to_string());
                 // Identity Sub-Accounts
                 let (_, subs) = api
@@ -840,7 +835,7 @@ impl Sync {
             .get()
             .await
             .map_err(CacheError::RedisPoolError)?;
-            let api = self.api();
+        let api = self.api();
 
         let active_era_index = match api.storage().staking().active_era(None).await? {
             Some(active_era_info) => active_era_info.index,
