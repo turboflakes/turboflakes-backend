@@ -19,6 +19,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::config::CONFIG;
 use crate::cache::{get_conn, RedisPool};
 use crate::errors::{ApiError, CacheError};
 use crate::helpers::respond_json;
@@ -35,6 +36,7 @@ pub struct InfoResponse {
     pub api_path: String,
     pub chain: ChainDetailsResponse,
     pub cache: CacheInfoResponse,
+    pub featured: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
@@ -122,6 +124,7 @@ impl From<BTreeMap<String, String>> for CacheInfoResponse {
 
 /// Handler to get information about the service
 pub async fn get_info(cache: Data<RedisPool>) -> Result<Json<InfoResponse>, ApiError> {
+    let config = CONFIG.clone();
     let mut conn = get_conn(&cache).await?;
     let cache_info: BTreeMap<String, String> = redis::cmd("HGETALL")
         .arg(sync::Key::Info)
@@ -141,5 +144,6 @@ pub async fn get_info(cache: Data<RedisPool>) -> Result<Json<InfoResponse>, ApiE
         api_path: "/api/v1".into(),
         chain: chain_info.into(),
         cache: cache_info.into(),
+        featured: config.turboflakes_featured_stashes,
     })
 }

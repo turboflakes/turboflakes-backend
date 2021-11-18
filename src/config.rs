@@ -40,6 +40,7 @@ use std::env;
 pub struct Config {
     pub turboflakes_host: String,
     pub turboflakes_port: u16,
+    pub turboflakes_featured_stashes: Vec<String>,
     pub rust_backtrace: u8,
     pub rust_log: String,
     pub substrate_ws_url: String,
