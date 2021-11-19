@@ -146,7 +146,123 @@ pub async fn get_validator(
     respond_json(data.into())
 }
 
+// Deprecated BoardLimits use BoardIntervalLimitsCache
 type BoardLimits = BTreeMap<String, f64>;
+
+type BoardIntervalLimitsCache = BTreeMap<String, f64>;
+
+#[derive(Debug, Serialize, PartialEq)]
+pub struct Interval {
+    pub min: f64,
+    pub max: f64,
+}
+
+impl Default for Interval {
+    fn default() -> Interval {
+        Interval {
+            min: 0.0_f64,
+            max: 100.0_f64,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, PartialEq)]
+pub struct BoardIntervalLimits {
+    pub inclusion_rate: Interval,
+    pub commission: Interval,
+    pub nominators: Interval,
+    pub avg_reward_points: Interval,
+    pub reward_staked: Interval,
+    pub active: Interval,
+    pub own_stake: Interval,
+    pub total_stake: Interval,
+    pub judgements: Interval,
+    pub sub_accounts: Interval,
+}
+
+impl Default for BoardIntervalLimits {
+    fn default() -> BoardIntervalLimits {
+        BoardIntervalLimits {
+            inclusion_rate: Interval::default(),
+            commission: Interval::default(),
+            nominators: Interval::default(),
+            avg_reward_points: Interval::default(),
+            reward_staked: Interval::default(),
+            active: Interval::default(),
+            own_stake: Interval::default(),
+            total_stake: Interval::default(),
+            judgements: Interval::default(),
+            sub_accounts: Interval::default(),
+        }
+    }
+}
+
+impl From<BoardIntervalLimitsCache> for BoardIntervalLimits {
+    fn from(data: BoardIntervalLimitsCache) -> Self {
+        let default_min = 0.0_f64;
+        let default_max = 100.0_f64;
+        BoardIntervalLimits {
+            inclusion_rate: Interval::default(),
+            commission: Interval::default(),
+            nominators: Interval {
+                min: *data
+                    .get("min_nominators")
+                    .unwrap_or(&default_min),
+                max: *data
+                    .get("max_nominators")
+                    .unwrap_or(&default_max),
+            },
+            avg_reward_points: Interval {
+                min: *data
+                    .get("min_avg_reward_points")
+                    .unwrap_or(&default_min),
+                max: *data
+                    .get("max_avg_reward_points")
+                    .unwrap_or(&default_max),
+            },
+            reward_staked: Interval {
+                min: 0.0_f64,
+                max: 1.0_f64,
+            },
+            active: Interval {
+                min: 0.0_f64,
+                max: 1.0_f64,
+            },
+            own_stake: Interval {
+                min: *data
+                    .get("min_own_stake")
+                    .unwrap_or(&default_min),
+                max: *data
+                    .get("max_own_stake")
+                    .unwrap_or(&default_max),
+            },
+            total_stake: Interval {
+                min: *data
+                    .get("min_total_stake")
+                    .unwrap_or(&default_min),
+                max: *data
+                    .get("max_total_stake")
+                    .unwrap_or(&default_max),
+            },
+            judgements: Interval {
+                min: *data
+                    .get("min_judgements")
+                    .unwrap_or(&default_min),
+                max: *data
+                    .get("max_judgements")
+                    .unwrap_or(&default_max),
+            },
+            sub_accounts: Interval {
+                min: *data
+                    .get("min_sub_accounts")
+                    .unwrap_or(&default_min),
+                max: *data
+                    .get("max_sub_accounts")
+                    .unwrap_or(&default_max),
+            },
+        }
+    }
+}
 
 #[derive(Debug, Serialize, PartialEq)]
 pub enum Status {
@@ -159,7 +275,7 @@ pub struct ValidatorRankResponse {
     pub stash: String,
     pub rank: i64,
     pub scores: Vec<f64>,
-    pub limits: BoardLimits,
+    pub limits: BoardIntervalLimits,
     pub status: Status,
     pub status_msg: String,
 }
@@ -174,7 +290,7 @@ pub async fn get_validator_rank(
     let stash = AccountId32::from_str(&*stash.to_string())?;
     // Set field rank if params are correctly defined
     let board_name = match params.q {
-        Queries::Board => get_board_name(&params.w),
+        Queries::Board => get_board_name(&params.w, &params.r),
         _ => {
             let msg = format!("Parameter q must be equal to one of the options: [Board]");
             warn!("{}", msg);
@@ -189,9 +305,7 @@ pub async fn get_validator_rank(
         .map_err(CacheError::RedisCMDError)?;
 
     let key = sync::Key::BoardAtEra(era_index, board_name.clone());
-    let key_scores = sync::Key::BoardAtEra(era_index, format!("{}:scores", board_name));
-    let key_limits = sync::Key::BoardAtEra(era_index, format!("{}:limits", board_name));
-
+    
     // Sometimes the board is still not available since it has been
     // requested at the same time and is still being generated. For these situations
     // just respond with a not_ready status
@@ -210,7 +324,7 @@ pub async fn get_validator_rank(
             stash: stash.to_string(),
             rank: 0,
             scores: Vec::new(),
-            limits: BTreeMap::new(),
+            limits: BoardIntervalLimits::default(),
             status: Status::NotReady,
             status_msg: msg,
         });
@@ -236,6 +350,8 @@ pub async fn get_validator_rank(
         }
     };
 
+    // Check if scores key is already available
+    let key_scores = sync::Key::BoardAtEra(era_index, format!("{}:scores", board_name));
     if let redis::Value::Int(0) = redis::cmd("HEXISTS")
         .arg(key_scores.to_string())
         .arg(stash.to_string())
@@ -252,7 +368,7 @@ pub async fn get_validator_rank(
             stash: stash.to_string(),
             rank: 0,
             scores: Vec::new(),
-            limits: BTreeMap::new(),
+            limits: BoardIntervalLimits::default(),
             status: Status::NotReady,
             status_msg: msg,
         });
@@ -280,7 +396,9 @@ pub async fn get_validator_rank(
         .map(|x| x.parse::<f64>().unwrap_or_default())
         .collect();
 
+    // TODO: limits may make sense to be in a separate endpoint, but for now it's ok here
     // Check if limits key is already available
+    let key_limits = sync::Key::BoardAtEra(era_index, format!("{}:limits", board_name));
     if let redis::Value::Int(0) = redis::cmd("EXISTS")
         .arg(key_limits.to_string())
         .query_async(&mut conn as &mut Connection)
@@ -296,13 +414,13 @@ pub async fn get_validator_rank(
             stash: stash.to_string(),
             rank: 0,
             scores: Vec::new(),
-            limits: BTreeMap::new(),
+            limits: BoardIntervalLimits::default(),
             status: Status::NotReady,
             status_msg: msg,
         });
     }
     // Get limits
-    let limits: BoardLimits = redis::cmd("HGETALL")
+    let limits: BoardIntervalLimitsCache = redis::cmd("HGETALL")
         .arg(key_limits.to_string())
         .query_async(&mut conn as &mut Connection)
         .await
@@ -505,8 +623,25 @@ type Weight = u32;
 /// Position 9 - Lower number of sub-accounts is preferrable
 type Weights = Vec<Weight>;
 
+#[derive(Debug, Deserialize, Clone, PartialEq)]
+struct Range {
+    min: u32,
+    max: u32,
+}
+
+impl std::fmt::Display for Range {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{};{}", self.min, self.max)
+    }
+}
+
+type Ranges = Vec<Range>;
+
 /// Current weighs capacity
 const WEIGHTS_CAPACITY: usize = 10;
+
+/// Current ranges capacity
+const RANGES_CAPACITY: usize = 10;
 
 // Number of elements to return
 type Quantity = u32;
@@ -518,6 +653,9 @@ pub struct Params {
     #[serde(default = "default_weights")]
     #[serde(deserialize_with = "parse_weights")]
     w: Weights,
+    #[serde(default = "default_ranges")]
+    #[serde(deserialize_with = "parse_ranges")]
+    r: Ranges,
     #[serde(default)]
     n: Quantity,
 }
@@ -528,6 +666,10 @@ fn default_queries() -> Queries {
 
 fn default_weights() -> Weights {
     vec![0; WEIGHTS_CAPACITY]
+}
+
+fn default_ranges() -> Ranges {
+    vec![Range { min: 0, max: 100 }; RANGES_CAPACITY]
 }
 
 fn parse_weights<'de, D>(d: D) -> Result<Weights, D::Error>
@@ -542,11 +684,34 @@ where
 
         let mut weights: Weights = Vec::with_capacity(WEIGHTS_CAPACITY);
         for i in 0..WEIGHTS_CAPACITY {
-            let weight: u32 = weights_as_strvec[i].to_string().parse().unwrap_or(5);
-            let weight = if weight > 10 { 10 } else { weight };
+            let weight: u32 = weights_as_strvec.get(i).unwrap_or(&"0").parse().unwrap();
+            let weight = if weight > 9 { 9 } else { weight };
             weights.push(weight);
         }
         weights
+    })
+}
+
+fn parse_ranges<'de, D>(d: D) -> Result<Ranges, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Deserialize::deserialize(d).map(|x: Option<_>| {
+        let ranges_as_csv = x.unwrap_or("".to_string());
+
+        let mut ranges_as_strvec: Vec<&str> = ranges_as_csv.split(",").collect();
+        ranges_as_strvec.resize(RANGES_CAPACITY, "5");
+
+        let mut ranges: Ranges = Vec::with_capacity(RANGES_CAPACITY);
+        for i in 0..RANGES_CAPACITY {
+            let range_as_strvec: Vec<&str> = ranges_as_strvec[i].split(":").collect();
+            let range = Range {
+                min: range_as_strvec.get(0).unwrap_or(&"0").parse().unwrap(),
+                max: range_as_strvec.get(1).unwrap_or(&"100").parse().unwrap(),
+            };
+            ranges.push(range);
+        }
+        ranges
     })
 }
 
@@ -555,13 +720,34 @@ pub struct ValidatorsResponse {
     pub addresses: Vec<String>,
 }
 
-fn get_board_name(weights: &Weights) -> String {
+fn get_board_name(weights: &Weights, ranges: &Ranges) -> String {
+    format!(
+        "{}|{}",
+        weights_to_string(weights),
+        ranges_to_string(ranges)
+    )
+}
+
+fn weights_to_string(weights: &Weights) -> String {
     weights
         .iter()
         .enumerate()
         .map(|(i, x)| {
             if i == 0 {
                 return x.to_string();
+            }
+            format!(",{}", x)
+        })
+        .collect()
+}
+
+fn ranges_to_string(ranges: &Ranges) -> String {
+    ranges
+        .iter()
+        .enumerate()
+        .map(|(i, x)| {
+            if i == 0 {
+                return format!("{}", x);
             }
             format!(",{}", x)
         })
@@ -687,51 +873,73 @@ async fn calculate_max_limit(cache: Data<RedisPool>, name: &str) -> Result<f64, 
     Ok(v[0].1)
 }
 
-async fn generate_board(
+
+async fn cache_board_interval_limits(
     era_index: EraIndex,
-    weights: &Weights,
+    board_name: String,
     cache: Data<RedisPool>,
-) -> Result<(), ApiError> {
+) -> Result<BoardIntervalLimits, ApiError> {
     let mut conn = get_conn(&cache).await?;
 
-    let mut limits: BTreeMap<String, f64> = BTreeMap::new();
+    let mut limits: BoardIntervalLimitsCache = BTreeMap::new();
 
-    let max_avg_points_limit =
+    let max_avg_reward_points =
         calculate_avg_points(cache.clone(), sync::BOARD_MAX_POINTS_ERAS).await?;
-    limits.insert("max_avg_points_limit".to_string(), max_avg_points_limit);
-    let min_avg_points_limit =
+    limits.insert("max_avg_reward_points".to_string(), max_avg_reward_points);
+    let min_avg_reward_points =
         calculate_avg_points(cache.clone(), sync::BOARD_MIN_POINTS_ERAS).await?;
-    limits.insert("min_avg_points_limit".to_string(), min_avg_points_limit);
+    limits.insert("min_avg_reward_points".to_string(), min_avg_reward_points);
 
     let own_stake_interval =
         calculate_min_max_interval(cache.clone(), sync::BOARD_OWN_STAKE_VALIDATORS).await?;
     // let own_stake_interval = calculate_confidence_interval_95(cache.clone(), sync::BOARD_OWN_STAKE_VALIDATORS).await?;
-    limits.insert("min_own_stake_limit".to_string(), own_stake_interval.0);
-    limits.insert("max_own_stake_limit".to_string(), own_stake_interval.1);
+    limits.insert("min_own_stake".to_string(), own_stake_interval.0);
+    limits.insert("max_own_stake".to_string(), own_stake_interval.1);
 
     let total_stake_interval =
         calculate_min_max_interval(cache.clone(), sync::BOARD_TOTAL_STAKE_VALIDATORS).await?;
     // let total_stake_interval = calculate_confidence_interval_95(cache.clone(), sync::BOARD_TOTAL_STAKE_VALIDATORS).await?;
-    limits.insert("min_total_stake_limit".to_string(), total_stake_interval.0);
-    limits.insert("max_total_stake_limit".to_string(), total_stake_interval.1);
+    limits.insert("min_total_stake".to_string(), total_stake_interval.0);
+    limits.insert("max_total_stake".to_string(), total_stake_interval.1);
 
     let judgements_interval =
         calculate_min_max_interval(cache.clone(), sync::BOARD_JUDGEMENTS_VALIDATORS).await?;
     // let judgements_interval = calculate_confidence_interval_95(cache.clone(), sync::BOARD_JUDGEMENTS_VALIDATORS).await?;
-    limits.insert("min_judgements_limit".to_string(), judgements_interval.0);
-    limits.insert("max_judgements_limit".to_string(), judgements_interval.1);
+    limits.insert("min_judgements".to_string(), judgements_interval.0);
+    limits.insert("max_judgements".to_string(), judgements_interval.1);
 
     let sub_accounts_interval =
         calculate_min_max_interval(cache.clone(), sync::BOARD_SUB_ACCOUNTS_VALIDATORS).await?;
     // let sub_accounts_interval = calculate_confidence_interval_95(cache.clone(), sync::BOARD_SUB_ACCOUNTS_VALIDATORS).await?;
-    limits.insert(
-        "min_sub_accounts_limit".to_string(),
-        sub_accounts_interval.0,
-    );
-    limits.insert(
-        "max_sub_accounts_limit".to_string(),
-        sub_accounts_interval.1,
-    );
+    limits.insert("min_sub_accounts".to_string(), sub_accounts_interval.0);
+    limits.insert("max_sub_accounts".to_string(), sub_accounts_interval.1);
+
+    let key_limits = sync::Key::BoardAtEra(era_index, format!("{}:limits", board_name));
+    // Cache board limits
+    let _: () = redis::cmd("HSET")
+        .arg(key_limits.to_string())
+        .arg(limits.clone())
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    Ok(limits.into())
+}
+
+async fn generate_board_scores(
+    era_index: EraIndex,
+    weights: &Weights,
+    ranges: &Ranges,
+    cache: Data<RedisPool>,
+) -> Result<(), ApiError> {
+    let mut conn = get_conn(&cache).await?;
+
+    let board_name = get_board_name(weights, ranges);
+    let key = sync::Key::BoardAtEra(era_index, board_name.clone());
+    let key_scores = sync::Key::BoardAtEra(era_index, format!("{}:scores", board_name));
+
+    // Cache board limits
+    let limits: BoardIntervalLimits = cache_board_interval_limits(era_index, board_name, cache).await?;
 
     let stashes: Vec<String> = redis::cmd("ZRANGE")
         .arg(sync::Key::BoardAtEra(
@@ -741,18 +949,6 @@ async fn generate_board(
         .arg("-inf")
         .arg("+inf")
         .arg("BYSCORE")
-        .query_async(&mut conn as &mut Connection)
-        .await
-        .map_err(CacheError::RedisCMDError)?;
-
-    let board_name = get_board_name(weights);
-    let key = sync::Key::BoardAtEra(era_index, board_name.clone());
-    let key_scores = sync::Key::BoardAtEra(era_index, format!("{}:scores", board_name));
-    let key_limits = sync::Key::BoardAtEra(era_index, format!("{}:limits", board_name));
-    // Cache board limits
-    let _: () = redis::cmd("HSET")
-        .arg(key_limits.to_string())
-        .arg(limits)
         .query_async(&mut conn as &mut Connection)
         .await
         .map_err(CacheError::RedisCMDError)?;
@@ -782,8 +978,8 @@ async fn generate_board(
         scores.push(
             normalize_value(
                 validator.avg_reward_points,
-                min_avg_points_limit,
-                max_avg_points_limit,
+                limits.avg_reward_points.min,
+                limits.avg_reward_points.max,
             ) * weights[3] as f64,
         );
         scores.push(normalize_flag(validator.reward_staked) * weights[4] as f64);
@@ -791,29 +987,29 @@ async fn generate_board(
         scores.push(
             normalize_value(
                 validator.own_stake as f64,
-                own_stake_interval.0,
-                own_stake_interval.1,
+                limits.own_stake.min,
+                limits.own_stake.max,
             ) * weights[6] as f64,
         );
         scores.push(
             reverse_normalize_value(
                 (validator.own_stake + validator.nominators_stake) as f64,
-                total_stake_interval.0,
-                total_stake_interval.1,
+                limits.total_stake.min,
+                limits.total_stake.max,
             ) * weights[7] as f64,
         );
         scores.push(
             normalize_value(
                 validator.judgements as f64,
-                judgements_interval.0,
-                judgements_interval.1,
+                limits.judgements.min,
+                limits.judgements.max,
             ) * weights[8] as f64,
         );
         scores.push(
             reverse_normalize_value(
                 validator.sub_accounts as f64,
-                sub_accounts_interval.0,
-                sub_accounts_interval.1,
+                limits.sub_accounts.min,
+                limits.sub_accounts.max,
             ) * weights[9] as f64,
         );
         let score = scores.iter().fold(0.0, |acc, x| acc + x);
@@ -868,7 +1064,7 @@ pub async fn get_validators(
             sync::Key::BoardAtEra(era_index, sync::BOARD_ACTIVE_VALIDATORS.to_string())
         }
         Queries::All => sync::Key::BoardAtEra(era_index, sync::BOARD_ALL_VALIDATORS.to_string()),
-        Queries::Board => sync::Key::BoardAtEra(era_index, get_board_name(&params.w)),
+        Queries::Board => sync::Key::BoardAtEra(era_index, get_board_name(&params.w, &params.r)),
         _ => {
             let msg = format!(
                 "Parameter q={} must be equal to one of the options: [Active, All, Board]",
@@ -904,7 +1100,7 @@ pub async fn get_validators(
             return Err(ApiError::NotFound(msg));
         }
         // Generate and cache leaderboard
-        generate_board(era_index, &params.w, cache).await?;
+        generate_board_scores(era_index, &params.w, &params.r, cache).await?;
     }
 
     // Increase board stats counter

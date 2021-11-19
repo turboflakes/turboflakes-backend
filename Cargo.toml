@@ -27,6 +27,7 @@ chrono = "0.4"
 codec = { package = "parity-scale-codec", version = "2", default-features = false, features = ["derive", "full"] }
 regex = "1.4.6"
 quote = "1.0.10"
+hex = "0.4"
 
 # subxt = { package = "subxt", git = "https://github.com/turboflakes/subxt", branch = "develop-vnext" }
 subxt = { package = "subxt", git = "https://github.com/turboflakes/subxt", rev = "6e60b25" }

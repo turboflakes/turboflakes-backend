@@ -19,8 +19,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::config::CONFIG;
 use crate::cache::{get_conn, RedisPool};
+use crate::config::CONFIG;
 use crate::errors::{ApiError, CacheError};
 use crate::helpers::respond_json;
 use crate::sync::sync;
