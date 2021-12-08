@@ -51,6 +51,7 @@ pub type EraIndex = u32;
 pub type RewardPoint = u32;
 
 pub const BOARD_TOTAL_POINTS_ERAS: &'static str = "total:points:era";
+pub const BOARD_AVG_POINTS_ERAS: &'static str = "avg:points:era";
 pub const BOARD_MAX_POINTS_ERAS: &'static str = "max:points:era";
 pub const BOARD_MIN_POINTS_ERAS: &'static str = "min:points:era";
 pub const BOARD_ACTIVE_VALIDATORS: &'static str = "active:val";
@@ -210,15 +211,15 @@ impl Sync {
 
         self.network().await?;
 
-        // let active_era = self.active_era().await?;
+        let active_era = self.active_era().await?;
 
-        // self.eras_history_depth(active_era).await?;
+        self.eras_history_depth(active_era).await?;
 
-        // self.validators().await?;
+        self.validators().await?;
 
-        // self.nominators().await?;
+        self.nominators().await?;
 
-        // self.active_validators().await?;
+        self.active_validators().await?;
 
         self.status(Status::Finished).await?;
 
@@ -1079,6 +1080,14 @@ impl Sync {
         let _: () = redis::cmd("ZADD")
             .arg(Key::BoardAtEra(0, BOARD_TOTAL_POINTS_ERAS.to_string()))
             .arg(total) // score
+            .arg(era_index) // member
+            .query_async(&mut conn as &mut Connection)
+            .await
+            .map_err(CacheError::RedisCMDError)?;
+
+        let _: () = redis::cmd("ZADD")
+            .arg(Key::BoardAtEra(0, BOARD_AVG_POINTS_ERAS.to_string()))
+            .arg(avg) // score
             .arg(era_index) // member
             .query_async(&mut conn as &mut Connection)
             .await

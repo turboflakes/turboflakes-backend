@@ -252,7 +252,7 @@ impl From<BoardLimitsCache> for BoardLimits {
             },
             nominators: Interval {
                 min: 0.0_f64,
-                max: 256.0_f64,
+                max: NOMINATORS_OVERSUBSCRIBED_THRESHOLD as f64,
             },
             avg_reward_points: Interval {
                 min: *data.get("min_avg_reward_points").unwrap_or(&default_min),
@@ -290,6 +290,7 @@ impl From<BoardLimitsCache> for BoardLimits {
 pub enum Status {
     Ok = 1,
     NotReady = 2,
+    NotFound = 3,
 }
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -364,9 +365,17 @@ pub async fn get_validator_rank(
             rank
         }
         _ => {
-            let msg = format!("Validator rank with address {} not found", stash);
+            let msg = format!("The rank for stash {} is not found.", stash);
             warn!("{}", msg);
-            return Err(ApiError::NotFound(msg));
+            return respond_json(ValidatorRankResponse {
+                stash: stash.to_string(),
+                rank: 0,
+                scores: Vec::new(),
+                status: Status::NotFound,
+                status_msg: msg,
+            });
+
+            // return Err(ApiError::NotFound(msg));
         }
     };
 
@@ -585,7 +594,9 @@ impl std::fmt::Display for Queries {
     }
 }
 
-const MAX_NOMINATORS: i32 = 256;
+// TODO: get this constants from chain
+const NOMINATORS_OVERSUBSCRIBED_THRESHOLD: u32 = 256;
+const COMMISSION_PLANCK: u32 = 1000000000;
 
 /// Weight can be any value in a 10-point scale. Higher the weight more important
 /// is the criteria to the user
@@ -740,24 +751,6 @@ fn intervals_to_string(intervals: &Intervals) -> String {
         .collect()
 }
 
-
-const COMMISSION_PLANCK: u32 = 1000000000;
-/// Normalize commission between 0 - 1
-fn normalize_commission(commission: u32) -> f64 {
-    (commission as f64 / COMMISSION_PLANCK as f64) as f64
-}
-
-/// Reverse Normalize commission between 0 - 1
-/// lower commission the better
-fn reverse_normalize_commission(commission: u32, min: f64, max: f64) -> f64 {
-    1.0 - normalize_value(normalize_commission(commission), (min / COMMISSION_PLANCK as f64) as f64, (max / COMMISSION_PLANCK as f64) as f64)
-}
-
-/// Normalize boolean flag between 0 - 1
-fn normalize_flag(flag: bool) -> f64 {
-    (flag as u32) as f64
-}
-
 /// Normalize value between min and max
 fn normalize_value(value: f64, min: f64, max: f64) -> f64 {
     if value == 0.0 || value < min {
@@ -772,6 +765,26 @@ fn normalize_value(value: f64, min: f64, max: f64) -> f64 {
 /// Reverse normalization
 fn reverse_normalize_value(value: f64, min: f64, max: f64) -> f64 {
     1.0 - normalize_value(value, min, max)
+}
+
+/// Normalize commission between 0 - 1
+fn normalize_commission(commission: u32) -> f64 {
+    (commission as f64 / COMMISSION_PLANCK as f64) as f64
+}
+
+/// Reverse Normalize commission between 0 - 1
+/// lower commission the better
+fn reverse_normalize_commission(commission: u32, min: f64, max: f64) -> f64 {
+    reverse_normalize_value(
+        normalize_commission(commission),
+        (min / COMMISSION_PLANCK as f64) as f64,
+        (max / COMMISSION_PLANCK as f64) as f64,
+    )
+}
+
+/// Normalize boolean flag between 0 - 1
+fn normalize_flag(flag: bool) -> f64 {
+    (flag as u32) as f64
 }
 
 async fn calculate_avg_points(cache: Data<RedisPool>, name: &str) -> Result<f64, ApiError> {
@@ -870,12 +883,23 @@ async fn cache_board_limits(
 
     let mut limits: BoardLimitsCache = BTreeMap::new();
 
-    let max_avg_reward_points =
-        calculate_avg_points(cache.clone(), sync::BOARD_MAX_POINTS_ERAS).await?;
-    limits.insert("max_avg_reward_points".to_string(), max_avg_reward_points);
-    let min_avg_reward_points =
-        calculate_avg_points(cache.clone(), sync::BOARD_MIN_POINTS_ERAS).await?;
-    limits.insert("min_avg_reward_points".to_string(), min_avg_reward_points);
+    // let max_avg_reward_points =
+    //     calculate_avg_points(cache.clone(), sync::BOARD_MAX_POINTS_ERAS).await?;
+    // limits.insert("max_avg_reward_points".to_string(), max_avg_reward_points);
+    // let min_avg_reward_points =
+    //     calculate_avg_points(cache.clone(), sync::BOARD_MIN_POINTS_ERAS).await?;
+    // limits.insert("min_avg_reward_points".to_string(), min_avg_reward_points);
+
+    let avg_reward_points_interval =
+        calculate_min_max_interval(cache.clone(), sync::BOARD_AVG_POINTS_ERAS).await?;
+    limits.insert(
+        "min_avg_reward_points".to_string(),
+        avg_reward_points_interval.0,
+    );
+    limits.insert(
+        "max_avg_reward_points".to_string(),
+        avg_reward_points_interval.1,
+    );
 
     let own_stake_interval =
         calculate_min_max_interval(cache.clone(), sync::BOARD_OWN_STAKE_VALIDATORS).await?;
@@ -936,14 +960,26 @@ fn calculate_scores(
 ) -> Result<Vec<f64>, ApiError> {
     let mut scores: Vec<f64> = Vec::with_capacity(WEIGHTS_CAPACITY);
 
-
-    warn!("___ limits {:?}", limits);
-
-    scores.push(normalize_value(validator.inclusion_rate as f64, limits.inclusion_rate.min, limits.inclusion_rate.max) * weights[0] as f64);
-    scores.push(reverse_normalize_commission(validator.commission, limits.commission.min, limits.commission.max) * weights[1] as f64);
     scores.push(
-        reverse_normalize_value(validator.nominators as f64, 0.0, MAX_NOMINATORS as f64)
-            * weights[2] as f64,
+        normalize_value(
+            validator.inclusion_rate as f64,
+            limits.inclusion_rate.min,
+            limits.inclusion_rate.max,
+        ) * weights[0] as f64,
+    );
+    scores.push(
+        reverse_normalize_commission(
+            validator.commission,
+            limits.commission.min,
+            limits.commission.max,
+        ) * weights[1] as f64,
+    );
+    scores.push(
+        reverse_normalize_value(
+            validator.nominators as f64,
+            limits.nominators.min,
+            limits.nominators.max,
+        ) * weights[2] as f64,
     );
     scores.push(
         normalize_value(
@@ -995,7 +1031,7 @@ async fn generate_board_scores(
 
     let board_name = get_board_name(weights, None);
     let key = sync::Key::BoardAtEra(era_index, board_name.clone());
-    
+
     let exists: bool = redis::cmd("EXISTS")
         .arg(key.clone())
         .query_async(&mut conn as &mut Connection)
@@ -1093,7 +1129,7 @@ async fn generate_board_filtered_by_intervals(
 
     let board_name = get_board_name(weights, Some(intervals));
     let key = sync::Key::BoardAtEra(era_index, board_name.clone());
-    
+
     let exists: bool = redis::cmd("EXISTS")
         .arg(key.clone())
         .query_async(&mut conn as &mut Connection)
@@ -1164,29 +1200,47 @@ async fn generate_board_filtered_by_intervals(
         {
             continue;
         }
-        // if validator.nominators < limits.nominators.min as u32
-        //     || (validator.nominators > limits.nominators.max as u32
-        //         && limits.nominators.max < 256.0)
-        // {
-        //     continue;
-        // }
-        // if validator.avg_reward_points < limits.avg_reward_points.min
-        //     || validator.avg_reward_points > limits.avg_reward_points.max
-        // {
-        //     continue;
-        // }
-        // // TODO compare this in KSM not in plancks
-        // if validator.own_stake < limits.own_stake.min as u128
-        //     || validator.own_stake > limits.own_stake.max as u128
-        // {
-        //     continue;
-        // }
-        // // TODO compare this in KSM not in plancks
-        // if (validator.own_stake + validator.nominators_stake) < limits.total_stake.min as u128
-        //     || (validator.own_stake + validator.nominators_stake) > limits.total_stake.max as u128
-        // {
-        //     continue;
-        // }
+        if (validator.nominators as f64) < limits.nominators.min
+            || ((validator.nominators as f64) > limits.nominators.max
+                && limits.nominators.max < NOMINATORS_OVERSUBSCRIBED_THRESHOLD as f64)
+        {
+            continue;
+        }
+        if validator.avg_reward_points < limits.avg_reward_points.min
+            || validator.avg_reward_points > limits.avg_reward_points.max
+        {
+            continue;
+        }
+        if normalize_flag(validator.reward_staked) != limits.reward_staked.min
+            && limits.reward_staked.min == limits.reward_staked.max
+        {
+            continue;
+        }
+        if normalize_flag(validator.active) != limits.active.min
+            && limits.active.min == limits.active.max
+        {
+            continue;
+        }
+        if validator.own_stake < limits.own_stake.min as u128
+            || validator.own_stake > limits.own_stake.max as u128
+        {
+            continue;
+        }
+        if (validator.own_stake + validator.nominators_stake) < limits.total_stake.min as u128
+            || (validator.own_stake + validator.nominators_stake) > limits.total_stake.max as u128
+        {
+            continue;
+        }
+        if (validator.judgements as f64) < limits.judgements.min
+            || (validator.judgements as f64) > limits.judgements.max
+        {
+            continue;
+        }
+        if (validator.sub_accounts as f64) < limits.sub_accounts.min
+            || (validator.sub_accounts as f64) > limits.sub_accounts.max
+        {
+            continue;
+        }
 
         // Calculate scores
         let scores = calculate_scores(&validator, &limits, weights)?;
@@ -1337,7 +1391,6 @@ async fn get_board_validators(
     params: Query<Params>,
     cache: Data<RedisPool>,
 ) -> Result<Json<ValidatorsResponse>, ApiError> {
-    
     let key = sync::Key::BoardAtEra(era_index, get_board_name(&params.w, Some(&params.i)));
 
     // Generate leaderboard scores and cache it
