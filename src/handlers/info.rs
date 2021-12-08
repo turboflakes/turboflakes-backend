@@ -20,6 +20,7 @@
 // SOFTWARE.
 
 use crate::cache::{get_conn, RedisPool};
+use crate::config::CONFIG;
 use crate::errors::{ApiError, CacheError};
 use crate::helpers::respond_json;
 use crate::sync::sync;
@@ -35,6 +36,7 @@ pub struct InfoResponse {
     pub api_path: String,
     pub chain: ChainDetailsResponse,
     pub cache: CacheInfoResponse,
+    pub featured: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
@@ -44,6 +46,7 @@ pub struct ChainDetailsResponse {
     pub token_decimals: u8,
     pub ss58_format: u8,
     pub substrate_node_url: String,
+    pub genesis_hash: String,
 }
 
 impl From<BTreeMap<String, String>> for ChainDetailsResponse {
@@ -67,6 +70,10 @@ impl From<BTreeMap<String, String>> for ChainDetailsResponse {
                 .unwrap_or_default(),
             substrate_node_url: data
                 .get("substrate_node_url")
+                .unwrap_or(&"".to_string())
+                .to_string(),
+            genesis_hash: data
+                .get("genesis_hash")
                 .unwrap_or(&"".to_string())
                 .to_string(),
         }
@@ -117,6 +124,7 @@ impl From<BTreeMap<String, String>> for CacheInfoResponse {
 
 /// Handler to get information about the service
 pub async fn get_info(cache: Data<RedisPool>) -> Result<Json<InfoResponse>, ApiError> {
+    let config = CONFIG.clone();
     let mut conn = get_conn(&cache).await?;
     let cache_info: BTreeMap<String, String> = redis::cmd("HGETALL")
         .arg(sync::Key::Info)
@@ -136,5 +144,6 @@ pub async fn get_info(cache: Data<RedisPool>) -> Result<Json<InfoResponse>, ApiE
         api_path: "/api/v1".into(),
         chain: chain_info.into(),
         cache: cache_info.into(),
+        featured: config.turboflakes_featured_stashes,
     })
 }

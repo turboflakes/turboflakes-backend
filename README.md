@@ -104,7 +104,10 @@ Recompile the code on changes and run the binary
 
 ```bash
 #!/bin/bash
+# default .env
 $ cargo watch -x 'run --bin turboflakes-backend'
+# or specific .env.kusama configuration file
+$ TURBOFLAKES_CONFIG_FILENAME=.env.kusama cargo watch -x 'run --bin turboflakes-backend'
 ```
 
 ### Inspiration
